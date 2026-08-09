@@ -176,11 +176,30 @@
     border-radius: 10px;
     background: rgba(11, 11, 13, 0.94);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-    resize: both;
     overflow: hidden;
     min-width: 280px;
     min-height: 160px;
   }
+  .resize-handle {
+    position: absolute;
+    display: none;
+    z-index: 7;
+    touch-action: none;
+  }
+  #stage.floating .resize-handle { display: block; }
+  .resize-handle.edge-n, .resize-handle.edge-s { left: 12px; right: 12px; height: 10px; cursor: ns-resize; }
+  .resize-handle.edge-n { top: -5px; }
+  .resize-handle.edge-s { bottom: -5px; }
+  .resize-handle.edge-e, .resize-handle.edge-w { top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
+  .resize-handle.edge-e { right: -5px; }
+  .resize-handle.edge-w { left: -5px; }
+  .resize-handle.corner-nw, .resize-handle.corner-ne, .resize-handle.corner-sw, .resize-handle.corner-se {
+    width: 16px; height: 16px;
+  }
+  .resize-handle.corner-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+  .resize-handle.corner-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+  .resize-handle.corner-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+  .resize-handle.corner-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
   #dragHandle {
     display: none;
     position: absolute;
@@ -332,6 +351,13 @@ Good luck out there.</textarea>
       <div class="field">
         <label>&nbsp;</label>
         <div class="toggle-row">
+          <input type="checkbox" id="mirrorV">
+          <label for="mirrorV" style="margin:0;">Flip vertical (upside-down stand mount)</label>
+        </div>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <div class="toggle-row">
           <input type="checkbox" id="showGuide" checked>
           <label for="showGuide" style="margin:0;">Show reading guide line</label>
         </div>
@@ -348,17 +374,25 @@ Good luck out there.</textarea>
     <div class="actions">
       <button id="startBtn" class="primary">Start Teleprompter</button>
     </div>
-    <p class="hint">Once started: <kbd>Space</kbd> play/pause &nbsp; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> speed &nbsp; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> font size &nbsp; <kbd>Esc</kbd> exit &nbsp; <kbd>F</kbd> fullscreen</p>
+    <p class="hint">Once started: <kbd>Space</kbd> play/pause &nbsp; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> speed &nbsp; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> font size &nbsp; <kbd>Esc</kbd> exit &nbsp; <kbd>F</kbd> fullscreen &nbsp; <kbd>M</kbd> mirror &nbsp; <kbd>V</kbd> flip vertical</p>
   </div>
 </div>
 
 <div id="prompter">
   <div id="stage">
-    <div id="dragHandle">&#8942;&#8942;&#8942; drag to move &middot; resize from the corner</div>
+    <div id="dragHandle">&#8942;&#8942;&#8942; drag to move &middot; drag any edge or corner to resize</div>
     <div id="guide"></div>
     <div id="scrollArea">
       <div id="textContent"></div>
     </div>
+    <div class="resize-handle edge-n" data-dir="n"></div>
+    <div class="resize-handle edge-s" data-dir="s"></div>
+    <div class="resize-handle edge-e" data-dir="e"></div>
+    <div class="resize-handle edge-w" data-dir="w"></div>
+    <div class="resize-handle corner-nw" data-dir="nw"></div>
+    <div class="resize-handle corner-ne" data-dir="ne"></div>
+    <div class="resize-handle corner-sw" data-dir="sw"></div>
+    <div class="resize-handle corner-se" data-dir="se"></div>
   </div>
   <div id="countdown"></div>
   <div id="hud">
@@ -371,7 +405,8 @@ Good luck out there.</textarea>
     <span class="spacer"></span>
     <button id="fontDownBtn" title="Smaller (Left arrow)">A&minus;</button>
     <button id="fontUpBtn" title="Larger (Right arrow)">A+</button>
-    <button id="mirrorBtn" title="Toggle mirror">Mirror</button>
+    <button id="mirrorBtn" title="Toggle horizontal mirror">Mirror</button>
+    <button id="mirrorVBtn" title="Toggle vertical flip (upside-down stand mount)">Flip V</button>
     <button id="floatBtn" title="Toggle floating text box">Float</button>
     <button id="fullscreenBtn" title="Fullscreen (F)">Fullscreen</button>
   </div>
@@ -395,6 +430,7 @@ Good luck out there.</textarea>
   const lineHeightInput = document.getElementById('lineHeight');
   const textWidthInput = document.getElementById('textWidth');
   const mirrorHInput = document.getElementById('mirrorH');
+  const mirrorVInput = document.getElementById('mirrorV');
   const showGuideInput = document.getElementById('showGuide');
 
   const speedOut = document.getElementById('speedOut');
@@ -410,6 +446,7 @@ Good luck out there.</textarea>
   const fontUpBtn = document.getElementById('fontUpBtn');
   const fontDownBtn = document.getElementById('fontDownBtn');
   const mirrorBtn = document.getElementById('mirrorBtn');
+  const mirrorVBtn = document.getElementById('mirrorVBtn');
   const floatModeInput = document.getElementById('floatMode');
   const floatBtn = document.getElementById('floatBtn');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
@@ -462,6 +499,10 @@ Good luck out there.</textarea>
     state.mirrorH = mirrorHInput.checked;
     applyStyles();
   });
+  mirrorVInput.addEventListener('change', () => {
+    state.mirrorV = mirrorVInput.checked;
+    applyStyles();
+  });
   showGuideInput.addEventListener('change', () => {
     state.showGuide = showGuideInput.checked;
     applyStyles();
@@ -512,13 +553,89 @@ Good luck out there.</textarea>
     }
   }
 
-  const stageResizeObserver = new ResizeObserver((entries) => {
+  const MIN_W = 280;
+  const MIN_H = 160;
+  let resizeState = null;
+
+  function startResize(dir, e) {
     if (!state.floating) return;
-    const entry = entries[0];
-    floatRect.width = Math.round(entry.contentRect.width);
-    floatRect.height = Math.round(entry.contentRect.height);
+    resizeState = {
+      dir,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startWidth: floatRect.width,
+      startHeight: floatRect.height,
+      startLeft: floatRect.left,
+      startTop: floatRect.top
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+
+  function onResizeMove(e) {
+    if (!resizeState || e.pointerId !== resizeState.pointerId) return;
+    const dx = e.clientX - resizeState.startX;
+    const dy = e.clientY - resizeState.startY;
+    const dir = resizeState.dir;
+
+    let width = resizeState.startWidth;
+    let height = resizeState.startHeight;
+    let left = resizeState.startLeft;
+    let top = resizeState.startTop;
+
+    if (dir.includes('e')) width = resizeState.startWidth + dx;
+    if (dir.includes('s')) height = resizeState.startHeight + dy;
+    if (dir.includes('w')) {
+      width = resizeState.startWidth - dx;
+      left = resizeState.startLeft + dx;
+    }
+    if (dir.includes('n')) {
+      height = resizeState.startHeight - dy;
+      top = resizeState.startTop + dy;
+    }
+
+    if (width < MIN_W) {
+      if (dir.includes('w')) left -= (MIN_W - width);
+      width = MIN_W;
+    }
+    if (height < MIN_H) {
+      if (dir.includes('n')) top -= (MIN_H - height);
+      height = MIN_H;
+    }
+
+    if (left < 0) { width += left; left = 0; }
+    if (top < 0) { height += top; top = 0; }
+    if (left + width > window.innerWidth) width = window.innerWidth - left;
+    if (top + height > window.innerHeight) height = window.innerHeight - top;
+    width = Math.max(MIN_W, width);
+    height = Math.max(MIN_H, height);
+
+    floatRect.width = Math.round(width);
+    floatRect.height = Math.round(height);
+    floatRect.left = Math.round(left);
+    floatRect.top = Math.round(top);
+
+    stageEl.style.width = floatRect.width + 'px';
+    stageEl.style.height = floatRect.height + 'px';
+    stageEl.style.left = floatRect.left + 'px';
+    stageEl.style.top = floatRect.top + 'px';
+  }
+
+  function endResize(e) {
+    if (resizeState && e.pointerId === resizeState.pointerId) {
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (err) {}
+      resizeState = null;
+    }
+  }
+
+  document.querySelectorAll('.resize-handle').forEach((handle) => {
+    const dir = handle.dataset.dir;
+    handle.addEventListener('pointerdown', (e) => startResize(dir, e));
+    handle.addEventListener('pointermove', onResizeMove);
+    handle.addEventListener('pointerup', endResize);
+    handle.addEventListener('pointercancel', endResize);
   });
-  stageResizeObserver.observe(stageEl);
 
   dragHandleEl.addEventListener('pointerdown', (e) => {
     if (!state.floating) return;
@@ -689,6 +806,12 @@ Good luck out there.</textarea>
     applyStyles();
     showHud();
   });
+  mirrorVBtn.addEventListener('click', () => {
+    state.mirrorV = !state.mirrorV;
+    mirrorVInput.checked = state.mirrorV;
+    applyStyles();
+    showHud();
+  });
   fullscreenBtn.addEventListener('click', toggleFullscreen);
 
   scrollArea.addEventListener('mousemove', showHud);
@@ -722,6 +845,12 @@ Good luck out there.</textarea>
         break;
       case 'KeyF':
         toggleFullscreen();
+        break;
+      case 'KeyM':
+        mirrorBtn.click();
+        break;
+      case 'KeyV':
+        mirrorVBtn.click();
         break;
     }
   });
