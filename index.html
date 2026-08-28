@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Teleprompter</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0b0b0d">
@@ -22,6 +22,11 @@
     --muted: #8a8b93;
     --accent: #4f9dff;
     --accent-dim: #2a4f80;
+    --rec: #ff4b4b;
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --safe-left: env(safe-area-inset-left);
+    --safe-right: env(safe-area-inset-right);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -31,6 +36,7 @@
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     overflow: hidden;
+    -webkit-text-size-adjust: 100%;
   }
 
   /* ---------- Setup screen ---------- */
@@ -39,7 +45,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(24px + var(--safe-top)) calc(24px + var(--safe-right)) calc(24px + var(--safe-bottom)) calc(24px + var(--safe-left));
+    overflow-y: auto;
   }
   #setup.hidden { display: none; }
   .card {
@@ -102,6 +109,7 @@
   input[type="range"] {
     flex: 1;
     accent-color: var(--accent);
+    min-height: 28px;
   }
   select {
     width: 100%;
@@ -119,10 +127,12 @@
     font-size: 13px;
     color: var(--text);
   }
+  .toggle-row input[type="checkbox"] { width: 20px; height: 20px; }
 
   .actions {
     margin-top: 24px;
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 10px;
   }
@@ -135,6 +145,8 @@
     background: transparent;
     color: var(--text);
     cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   button:hover { border-color: var(--accent); }
   button.primary {
@@ -145,7 +157,7 @@
   }
   button.primary:hover { filter: brightness(1.08); }
 
-  /* ---------- Prompter screen ---------- */
+  /* ---------- Prompter screen (teleprompter-only mode, unchanged behaviour) ---------- */
   #prompter {
     position: fixed;
     inset: 0;
@@ -187,24 +199,24 @@
     touch-action: none;
   }
   #stage.floating .resize-handle { display: block; }
-  .resize-handle.edge-n, .resize-handle.edge-s { left: 12px; right: 12px; height: 10px; cursor: ns-resize; }
-  .resize-handle.edge-n { top: -5px; }
-  .resize-handle.edge-s { bottom: -5px; }
-  .resize-handle.edge-e, .resize-handle.edge-w { top: 12px; bottom: 12px; width: 10px; cursor: ew-resize; }
-  .resize-handle.edge-e { right: -5px; }
-  .resize-handle.edge-w { left: -5px; }
+  .resize-handle.edge-n, .resize-handle.edge-s { left: 12px; right: 12px; height: 14px; cursor: ns-resize; }
+  .resize-handle.edge-n { top: -7px; }
+  .resize-handle.edge-s { bottom: -7px; }
+  .resize-handle.edge-e, .resize-handle.edge-w { top: 12px; bottom: 12px; width: 14px; cursor: ew-resize; }
+  .resize-handle.edge-e { right: -7px; }
+  .resize-handle.edge-w { left: -7px; }
   .resize-handle.corner-nw, .resize-handle.corner-ne, .resize-handle.corner-sw, .resize-handle.corner-se {
-    width: 16px; height: 16px;
+    width: 22px; height: 22px;
   }
-  .resize-handle.corner-nw { top: -5px; left: -5px; cursor: nwse-resize; }
-  .resize-handle.corner-ne { top: -5px; right: -5px; cursor: nesw-resize; }
-  .resize-handle.corner-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
-  .resize-handle.corner-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+  .resize-handle.corner-nw { top: -7px; left: -7px; cursor: nwse-resize; }
+  .resize-handle.corner-ne { top: -7px; right: -7px; cursor: nesw-resize; }
+  .resize-handle.corner-sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+  .resize-handle.corner-se { bottom: -7px; right: -7px; cursor: nwse-resize; }
   #dragHandle {
     display: none;
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 26px;
+    height: 30px;
     align-items: center;
     justify-content: center;
     background: rgba(255, 255, 255, 0.06);
@@ -221,7 +233,7 @@
     display: flex;
   }
   #stage.floating #scrollArea {
-    top: 26px;
+    top: 30px;
   }
 
   #scrollArea {
@@ -230,6 +242,7 @@
     overflow-y: scroll;
     scrollbar-width: none;
     padding: 0 8vw;
+    -webkit-overflow-scrolling: touch;
   }
   #scrollArea::-webkit-scrollbar { display: none; }
 
@@ -250,8 +263,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 6px;
-    padding: 10px 14px;
+    padding: 10px calc(14px + var(--safe-right)) calc(10px + var(--safe-bottom)) calc(14px + var(--safe-left));
     background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
     z-index: 10;
     transition: opacity 0.3s;
@@ -269,7 +283,7 @@
     padding: 0 4px;
   }
 
-  #countdown {
+  #countdown, #camCountdown {
     position: fixed;
     inset: 0;
     display: none;
@@ -278,10 +292,10 @@
     font-size: 120px;
     font-weight: 700;
     color: var(--accent);
-    z-index: 20;
+    z-index: 60;
     background: rgba(0,0,0,0.4);
   }
-  #countdown.active { display: flex; }
+  #countdown.active, #camCountdown.active { display: flex; }
 
   kbd {
     background: #0e0e11;
@@ -295,6 +309,218 @@
     font-size: 12px;
     color: var(--muted);
   }
+
+  /* ---------- Camera + Teleprompter mode ---------- */
+  #camera {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    display: none;
+    overflow: hidden;
+  }
+  #camera.active { display: block; }
+
+  #camVideo {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #000;
+    z-index: 1;
+  }
+  #camVideo.mirror { transform: scaleX(-1); }
+
+  /* Teleprompter overlay - layered above camera via normal DOM, never part of the stream */
+  #camPrompter {
+    position: absolute;
+    z-index: 20;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+    touch-action: none;
+  }
+  #camDrag {
+    height: 34px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: rgba(255,255,255,0.75);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    background: rgba(255,255,255,0.08);
+    cursor: move;
+    user-select: none;
+    touch-action: none;
+  }
+  #camScroll {
+    flex: 1 1 auto;
+    overflow-y: scroll;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+  #camScroll::-webkit-scrollbar { display: none; }
+  #camText {
+    padding: 45% 6% 90%;
+    white-space: pre-wrap;
+    text-align: center;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.9);
+  }
+  #camText.mirrored { transform: scaleX(-1); }
+
+  /* Top bar */
+  #camTop {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: calc(10px + var(--safe-top)) calc(12px + var(--safe-right)) 10px calc(12px + var(--safe-left));
+    background: linear-gradient(to bottom, rgba(0,0,0,0.55), transparent);
+  }
+  #camTop .grow { flex: 1; }
+  .round-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    padding: 0;
+    background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: #fff;
+  }
+  #recIndicator {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+    background: rgba(0,0,0,0.5);
+    padding: 6px 12px;
+    border-radius: 20px;
+  }
+  #recIndicator.on { display: flex; }
+  #recDot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--rec);
+    animation: recpulse 1.4s ease-in-out infinite;
+  }
+  @keyframes recpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* Bottom controls */
+  #camBottom {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 16px calc(16px + var(--safe-right)) calc(18px + var(--safe-bottom)) calc(16px + var(--safe-left));
+    background: linear-gradient(to top, rgba(0,0,0,0.6), transparent);
+  }
+  #camBottom button {
+    background: rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.18);
+    color: #fff;
+    min-width: 52px;
+    min-height: 48px;
+    font-size: 15px;
+  }
+  #recordBtn {
+    width: 74px;
+    height: 74px;
+    border-radius: 50%;
+    border: 4px solid rgba(255,255,255,0.9);
+    background: var(--rec);
+    flex: 0 0 auto;
+    padding: 0;
+  }
+  #recordBtn.recording {
+    background: #fff;
+  }
+  #recordBtn.recording::after {
+    content: "";
+    display: block;
+    width: 26px; height: 26px;
+    margin: 0 auto;
+    border-radius: 5px;
+    background: var(--rec);
+  }
+  #camPlayBtn { min-width: 74px; }
+
+  /* Settings bottom sheet */
+  #camSheet {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    z-index: 50;
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    padding: 18px calc(18px + var(--safe-right)) calc(20px + var(--safe-bottom)) calc(18px + var(--safe-left));
+    transform: translateY(110%);
+    transition: transform 0.25s ease;
+    max-height: 80%;
+    overflow-y: auto;
+  }
+  #camSheet.open { transform: translateY(0); }
+  #camSheet h2 {
+    margin: 0 0 14px;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #camSheet .field { margin-bottom: 14px; }
+  #camSheet .sheet-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 6px;
+  }
+
+  /* Full-screen panels: intro / error / review */
+  .cam-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 55;
+    display: none;
+    flex-direction: column;
+    background: var(--bg);
+    padding: calc(28px + var(--safe-top)) calc(24px + var(--safe-right)) calc(28px + var(--safe-bottom)) calc(24px + var(--safe-left));
+    overflow-y: auto;
+  }
+  .cam-panel.show { display: flex; }
+  .cam-panel h2 { margin: 0 0 12px; font-size: 18px; }
+  .cam-panel p { color: var(--muted); font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
+  .cam-panel .panel-actions {
+    margin-top: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-top: 18px;
+  }
+  #reviewVideo {
+    width: 100%;
+    max-height: 60vh;
+    background: #000;
+    border-radius: 10px;
+    margin-bottom: 14px;
+  }
+  .cam-panel .primary { flex: 1; min-width: 130px; }
 </style>
 </head>
 <body>
@@ -302,11 +528,11 @@
 <div id="setup">
   <div class="card">
     <h1>Teleprompter</h1>
-    <p class="sub">Paste your script, tune the settings, then start.</p>
+    <p class="sub">Paste your script, tune the settings, then choose a mode.</p>
 
     <textarea id="scriptInput" placeholder="Paste or type your script here...">Welcome to the show.
 
-This is your teleprompter. Paste your own script into this box, adjust the speed and font size below, then hit Start.
+This is your teleprompter. Paste your own script into this box, adjust the speed and font size below, then start.
 
 Use Space to play or pause, the Up and Down arrows to change speed on the fly, and Escape to come back here.
 
@@ -372,9 +598,11 @@ Good luck out there.</textarea>
     </div>
 
     <div class="actions">
+      <button id="cameraBtn">Camera + Teleprompter</button>
       <button id="startBtn" class="primary">Start Teleprompter</button>
     </div>
     <p class="hint">Once started: <kbd>Space</kbd> play/pause &nbsp; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> speed &nbsp; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> font size &nbsp; <kbd>Esc</kbd> exit &nbsp; <kbd>F</kbd> fullscreen &nbsp; <kbd>M</kbd> mirror &nbsp; <kbd>V</kbd> flip vertical</p>
+    <p class="hint"><strong>Camera + Teleprompter</strong> shows your camera full-screen with the script floating over it, and records video + sound. The script never appears in the saved video.</p>
   </div>
 </div>
 
@@ -412,7 +640,112 @@ Good luck out there.</textarea>
   </div>
 </div>
 
+<!-- ============ Camera + Teleprompter mode ============ -->
+<div id="camera">
+  <video id="camVideo" playsinline autoplay muted webkit-playsinline></video>
+
+  <div id="camPrompter">
+    <div id="camDrag">&#8942;&#8942;&#8942; drag to reposition near the lens</div>
+    <div id="camScroll"><div id="camText"></div></div>
+  </div>
+
+  <div id="camTop">
+    <button class="round-btn" id="camCloseBtn" title="Back to script" aria-label="Back to script">&larr;</button>
+    <div id="recIndicator"><span id="recDot"></span><span id="recTime">00:00</span></div>
+    <div class="grow"></div>
+    <button class="round-btn" id="camFlipBtn" title="Switch camera" aria-label="Switch camera">&#8635;</button>
+    <button class="round-btn" id="camSettingsBtn" title="Settings" aria-label="Settings">&#9881;</button>
+  </div>
+
+  <div id="camBottom">
+    <button id="camSpeedDown" title="Slower">&minus;</button>
+    <button id="camPlayBtn" title="Play/pause teleprompter">Play</button>
+    <button id="recordBtn" title="Record / Stop" aria-label="Record or stop"></button>
+    <button id="camFontDown" title="Smaller text">A&minus;</button>
+    <button id="camFontUp" title="Larger text">A+</button>
+    <button id="camSpeedUp" title="Faster">+</button>
+  </div>
+
+  <div id="camSheet">
+    <h2>Settings <button id="camSheetClose" style="padding:4px 12px;">Done</button></h2>
+    <div class="field">
+      <label>Overlay opacity <span id="camOpacityOut" style="color:var(--text)">35%</span></label>
+      <input type="range" id="camOpacity" min="0" max="90" step="5" value="35">
+    </div>
+    <div class="field">
+      <label>Box width <span id="camBoxWOut" style="color:var(--text)">88%</span></label>
+      <input type="range" id="camBoxW" min="50" max="98" step="1" value="88">
+    </div>
+    <div class="field">
+      <label>Box height <span id="camBoxHOut" style="color:var(--text)">42%</span></label>
+      <input type="range" id="camBoxH" min="20" max="80" step="1" value="42">
+    </div>
+    <div class="field">
+      <label>Font size <span id="camFontOut" style="color:var(--text)">40</span></label>
+      <input type="range" id="camFont" min="20" max="80" step="2" value="40">
+    </div>
+    <div class="field">
+      <label>Line spacing <span id="camLineOut" style="color:var(--text)">1.5</span></label>
+      <input type="range" id="camLine" min="1.1" max="2.2" step="0.1" value="1.5">
+    </div>
+    <div class="field">
+      <label>Scroll speed <span id="camSpeedOut" style="color:var(--text)">3.0</span></label>
+      <input type="range" id="camSpeed" min="1" max="10" step="0.5" value="3">
+    </div>
+    <div class="field toggle-row">
+      <input type="checkbox" id="camMirrorText">
+      <label for="camMirrorText" style="margin:0;">Mirror teleprompter text (for beam-splitter glass)</label>
+    </div>
+    <div class="field toggle-row">
+      <input type="checkbox" id="camMirrorPreview" checked>
+      <label for="camMirrorPreview" style="margin:0;">Mirror front-camera preview (recording stays un-mirrored)</label>
+    </div>
+    <div class="sheet-actions">
+      <button id="camResetPos">Reset position</button>
+      <button id="camFsBtn">Fullscreen</button>
+    </div>
+  </div>
+
+  <div id="camCountdown"></div>
+
+  <!-- Permission explainer -->
+  <div class="cam-panel" id="camIntro">
+    <h2>Camera + Teleprompter</h2>
+    <p>Camera and microphone access are needed to record your video. Your recording stays on your device unless you choose to share it &mdash; nothing is uploaded.</p>
+    <p>Your script will float over the camera preview so you can read while looking near the lens. The script is <strong>not</strong> included in the saved video.</p>
+    <div class="panel-actions">
+      <button id="camIntroBack">Back</button>
+      <button class="primary" id="camIntroGo">Allow camera &amp; microphone</button>
+    </div>
+  </div>
+
+  <!-- Error panel -->
+  <div class="cam-panel" id="camErrorPanel">
+    <h2 id="camErrTitle">Something went wrong</h2>
+    <p id="camErrMsg"></p>
+    <div class="panel-actions">
+      <button id="camErrBack">Back to script</button>
+      <button class="primary" id="camErrRetry">Try again</button>
+    </div>
+  </div>
+
+  <!-- Review panel -->
+  <div class="cam-panel" id="camReview">
+    <h2>Save or share your recording</h2>
+    <video id="reviewVideo" controls playsinline></video>
+    <p id="reviewNote">Your video is ready. Use <strong>Save / Share</strong> to keep it in Photos or send it on.</p>
+    <div class="panel-actions">
+      <button id="reviewRetake">Retake</button>
+      <button class="primary" id="reviewSave">Save / Share</button>
+      <button id="reviewBack">Back to script</button>
+    </div>
+  </div>
+</div>
+
 <script>
+/* =========================================================================
+   Teleprompter-only mode  (existing behaviour, preserved)
+   ========================================================================= */
 (function () {
   const setup = document.getElementById('setup');
   const prompter = document.getElementById('prompter');
@@ -629,7 +962,7 @@ Good luck out there.</textarea>
     }
   }
 
-  document.querySelectorAll('.resize-handle').forEach((handle) => {
+  document.querySelectorAll('#stage .resize-handle').forEach((handle) => {
     const dir = handle.dataset.dir;
     handle.addEventListener('pointerdown', (e) => startResize(dir, e));
     handle.addEventListener('pointermove', onResizeMove);
@@ -683,6 +1016,7 @@ Good luck out there.</textarea>
   });
 
   function startPrompter() {
+    saveScript();
     loadScript();
     applyStyles();
     applyFloating();
@@ -855,9 +1189,611 @@ Good luck out there.</textarea>
     }
   });
 
+  /* ---- lightweight script persistence (shared with camera mode) ---- */
+  const SCRIPT_KEY = 'teleprompter.script';
+  function saveScript() {
+    try { localStorage.setItem(SCRIPT_KEY, scriptInput.value || ''); } catch (e) {}
+  }
+  try {
+    const saved = localStorage.getItem(SCRIPT_KEY);
+    if (saved !== null && saved !== '') scriptInput.value = saved;
+  } catch (e) {}
+  scriptInput.addEventListener('input', saveScript);
+
   syncLiveLabels();
 })();
 
+
+/* =========================================================================
+   Camera + Teleprompter mode
+   ========================================================================= */
+(function () {
+  const setup = document.getElementById('setup');
+  const scriptInput = document.getElementById('scriptInput');
+  const cameraBtn = document.getElementById('cameraBtn');
+  const cameraScreen = document.getElementById('camera');
+  const video = document.getElementById('camVideo');
+
+  const box = document.getElementById('camPrompter');
+  const dragH = document.getElementById('camDrag');
+  const scrollEl = document.getElementById('camScroll');
+  const textEl = document.getElementById('camText');
+
+  const recIndicator = document.getElementById('recIndicator');
+  const recTime = document.getElementById('recTime');
+  const recordBtn = document.getElementById('recordBtn');
+  const playBtn = document.getElementById('camPlayBtn');
+  const flipBtn = document.getElementById('camFlipBtn');
+  const closeBtn = document.getElementById('camCloseBtn');
+  const settingsBtn = document.getElementById('camSettingsBtn');
+  const sheet = document.getElementById('camSheet');
+  const sheetClose = document.getElementById('camSheetClose');
+  const countdownEl = document.getElementById('camCountdown');
+
+  const speedDown = document.getElementById('camSpeedDown');
+  const speedUp = document.getElementById('camSpeedUp');
+  const fontDown = document.getElementById('camFontDown');
+  const fontUp = document.getElementById('camFontUp');
+
+  const opacityInput = document.getElementById('camOpacity');
+  const boxWInput = document.getElementById('camBoxW');
+  const boxHInput = document.getElementById('camBoxH');
+  const fontInput = document.getElementById('camFont');
+  const lineInput = document.getElementById('camLine');
+  const speedInput = document.getElementById('camSpeed');
+  const mirrorTextInput = document.getElementById('camMirrorText');
+  const mirrorPreviewInput = document.getElementById('camMirrorPreview');
+  const resetPosBtn = document.getElementById('camResetPos');
+  const fsBtn = document.getElementById('camFsBtn');
+
+  const opacityOut = document.getElementById('camOpacityOut');
+  const boxWOut = document.getElementById('camBoxWOut');
+  const boxHOut = document.getElementById('camBoxHOut');
+  const fontOut = document.getElementById('camFontOut');
+  const lineOut = document.getElementById('camLineOut');
+  const speedOut = document.getElementById('camSpeedOut');
+
+  const introPanel = document.getElementById('camIntro');
+  const introGo = document.getElementById('camIntroGo');
+  const introBack = document.getElementById('camIntroBack');
+  const errPanel = document.getElementById('camErrorPanel');
+  const errTitle = document.getElementById('camErrTitle');
+  const errMsg = document.getElementById('camErrMsg');
+  const errBack = document.getElementById('camErrBack');
+  const errRetry = document.getElementById('camErrRetry');
+  const reviewPanel = document.getElementById('camReview');
+  const reviewVideo = document.getElementById('reviewVideo');
+  const reviewNote = document.getElementById('reviewNote');
+  const reviewRetake = document.getElementById('reviewRetake');
+  const reviewSave = document.getElementById('reviewSave');
+  const reviewBack = document.getElementById('reviewBack');
+
+  const SETTINGS_KEY = 'teleprompter.camSettings';
+
+  let stream = null;
+  let facing = 'user';
+  let recorder = null;
+  let chunks = [];
+  let recording = false;
+  let recMime = '';
+  let recStart = 0;
+  let recTimer = null;
+  let reviewUrl = null;
+  let wakeLock = null;
+  let cameraActive = false;
+
+  let rafId = null;
+  let lastTs = null;
+  let playing = false;
+
+  let cfg = {
+    opacity: 35, boxW: 88, boxH: 42, font: 40, line: 1.5, speed: 3,
+    mirrorText: false, mirrorPreview: true,
+    posX: null, posY: null
+  };
+
+  /* ---------- settings persistence ---------- */
+  function loadCfg() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) Object.assign(cfg, JSON.parse(raw));
+    } catch (e) {}
+  }
+  function saveCfg() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) {}
+  }
+
+  function syncInputsFromCfg() {
+    opacityInput.value = cfg.opacity;
+    boxWInput.value = cfg.boxW;
+    boxHInput.value = cfg.boxH;
+    fontInput.value = cfg.font;
+    lineInput.value = cfg.line;
+    speedInput.value = cfg.speed;
+    mirrorTextInput.checked = cfg.mirrorText;
+    mirrorPreviewInput.checked = cfg.mirrorPreview;
+  }
+
+  function applyCfg() {
+    opacityOut.textContent = cfg.opacity + '%';
+    boxWOut.textContent = cfg.boxW + '%';
+    boxHOut.textContent = cfg.boxH + '%';
+    fontOut.textContent = cfg.font;
+    lineOut.textContent = Number(cfg.line).toFixed(1);
+    speedOut.textContent = Number(cfg.speed).toFixed(1);
+
+    box.style.background = 'rgba(0,0,0,' + (cfg.opacity / 100) + ')';
+    box.style.width = cfg.boxW + 'vw';
+    box.style.height = cfg.boxH + 'vh';
+    textEl.style.fontSize = cfg.font + 'px';
+    textEl.style.lineHeight = cfg.line;
+    textEl.classList.toggle('mirrored', cfg.mirrorText);
+    applyPreviewMirror();
+    positionBox();
+    saveCfg();
+  }
+
+  function applyPreviewMirror() {
+    const shouldMirror = facing === 'user' && cfg.mirrorPreview;
+    video.classList.toggle('mirror', shouldMirror);
+  }
+
+  /* ---------- overlay box positioning ---------- */
+  function defaultPos() {
+    const w = window.innerWidth * cfg.boxW / 100;
+    return {
+      x: Math.max(8, (window.innerWidth - w) / 2),
+      y: Math.max(56 + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 0), window.innerHeight * 0.10)
+    };
+  }
+  function positionBox() {
+    if (cfg.posX === null || cfg.posY === null) {
+      const d = defaultPos();
+      cfg.posX = d.x; cfg.posY = d.y;
+    }
+    clampPos();
+    box.style.left = cfg.posX + 'px';
+    box.style.top = cfg.posY + 'px';
+  }
+  function clampPos() {
+    const bw = box.offsetWidth || window.innerWidth * cfg.boxW / 100;
+    const bh = box.offsetHeight || window.innerHeight * cfg.boxH / 100;
+    const maxX = Math.max(0, window.innerWidth - bw);
+    const maxY = Math.max(0, window.innerHeight - Math.min(bh, 120));
+    cfg.posX = Math.min(Math.max(0, cfg.posX), maxX);
+    cfg.posY = Math.min(Math.max(0, cfg.posY), maxY);
+  }
+
+  let drag = null;
+  dragH.addEventListener('pointerdown', (e) => {
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: cfg.posX, oy: cfg.posY };
+    try { dragH.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+  dragH.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    cfg.posX = drag.ox + (e.clientX - drag.x);
+    cfg.posY = drag.oy + (e.clientY - drag.y);
+    clampPos();
+    box.style.left = cfg.posX + 'px';
+    box.style.top = cfg.posY + 'px';
+    e.preventDefault();
+  });
+  function endDrag(e) {
+    if (drag && e.pointerId === drag.id) {
+      try { dragH.releasePointerCapture(e.pointerId); } catch (err) {}
+      drag = null;
+      saveCfg();
+    }
+  }
+  dragH.addEventListener('pointerup', endDrag);
+  dragH.addEventListener('pointercancel', endDrag);
+
+  /* ---------- scroll engine (requestAnimationFrame) ---------- */
+  function tick(ts) {
+    if (!playing) return;
+    if (lastTs === null) lastTs = ts;
+    const dt = (ts - lastTs) / 1000;
+    lastTs = ts;
+    scrollEl.scrollTop += cfg.speed * 18 * dt;
+    if (scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 2) {
+      playing = false;
+      updatePlayLabel();
+      return;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+  function setPlaying(v) {
+    playing = v;
+    updatePlayLabel();
+    if (playing) {
+      lastTs = null;
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  }
+  function updatePlayLabel() {
+    playBtn.textContent = playing ? 'Pause' : 'Play';
+  }
+
+  /* ---------- camera ---------- */
+  function stopStream(s) {
+    if (s) s.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
+  }
+
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('Recording isn’t supported here',
+        'This browser can’t open the camera. Try the latest version of Safari.');
+      return false;
+    }
+    stopStream(stream);
+    stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing } },
+        audio: true
+      });
+    } catch (err) {
+      console.error('getUserMedia failed:', err);
+      handleCamError(err);
+      return false;
+    }
+    video.srcObject = stream;
+    video.setAttribute('playsinline', '');
+    video.muted = true;
+    try { await video.play(); } catch (e) { /* autoplay guard */ }
+    applyPreviewMirror();
+    return true;
+  }
+
+  function handleCamError(err) {
+    const name = err && err.name ? err.name : '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      showError('Camera access is turned off',
+        'Allow Camera and Microphone access for this website in Safari settings, then try again.');
+    } else if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'DevicesNotFoundError') {
+      showError('No camera found', 'No camera was found on this device.');
+    } else if (name === 'NotReadableError' || name === 'AbortError' || name === 'TrackStartError') {
+      showError('Camera is busy',
+        'The camera may already be in use by another app. Close the other camera app and try again.');
+    } else {
+      showError('Camera couldn’t start',
+        'Something stopped the camera from starting. Check that camera and microphone access is allowed for this site, then try again.');
+    }
+  }
+
+  async function flipCamera() {
+    if (recording) return;
+    facing = (facing === 'user') ? 'environment' : 'user';
+    const ok = await startCamera();
+    if (!ok) { facing = (facing === 'user') ? 'environment' : 'user'; }
+  }
+
+  /* ---------- recording ---------- */
+  function pickMime() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    const candidates = [
+      'video/mp4;codecs=h264,aac',
+      'video/mp4',
+      'video/webm;codecs=h264,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=vp8,opus',
+      'video/webm'
+    ];
+    for (const m of candidates) {
+      try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (e) {}
+    }
+    return '';
+  }
+
+  function fmtTime(totalSec) {
+    const s = Math.floor(totalSec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return (h > 0 ? h + ':' + pad(m) : pad(m)) + ':' + pad(ss);
+  }
+
+  function onRecordBtn() {
+    if (recording) {
+      stopRecording();
+    } else {
+      if (typeof MediaRecorder === 'undefined') {
+        showError('Recording isn’t supported in this browser', 'Try the latest version of Safari.');
+        return;
+      }
+      startCountdownThenRecord();
+    }
+  }
+
+  function startCountdownThenRecord() {
+    runCountdown(3, () => {
+      const started = beginRecording();
+      if (started) {
+        scrollEl.scrollTop = 0;
+        setPlaying(true);
+      }
+    });
+  }
+
+  function beginRecording() {
+    if (!stream) return false;
+    chunks = [];
+    recMime = pickMime();
+    let opts = {};
+    if (recMime) opts.mimeType = recMime;
+    try {
+      recorder = new MediaRecorder(stream, opts);
+    } catch (e1) {
+      try {
+        recorder = new MediaRecorder(stream);
+        recMime = recorder.mimeType || '';
+      } catch (e2) {
+        console.error('MediaRecorder init failed:', e2);
+        showError('Recording couldn’t start',
+          'This browser can’t record video. Try the latest version of Safari.');
+        return false;
+      }
+    }
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.onstop = finishRecording;
+    recorder.onerror = (e) => { console.error('recorder error', e); };
+    try {
+      recorder.start(1000);
+    } catch (e) {
+      console.error('recorder.start failed:', e);
+      showError('Recording couldn’t start', 'Try the latest version of Safari.');
+      return false;
+    }
+    recording = true;
+    recStart = Date.now();
+    recIndicator.classList.add('on');
+    recordBtn.classList.add('recording');
+    recTime.textContent = '00:00';
+    recTimer = setInterval(() => {
+      recTime.textContent = fmtTime((Date.now() - recStart) / 1000);
+    }, 500);
+    requestWakeLock();
+    return true;
+  }
+
+  function stopRecording() {
+    if (!recording) return;
+    recording = false;
+    if (recTimer) { clearInterval(recTimer); recTimer = null; }
+    recIndicator.classList.remove('on');
+    recordBtn.classList.remove('recording');
+    setPlaying(false);
+    try { recorder.stop(); } catch (e) { console.error(e); }
+    releaseWakeLock();
+  }
+
+  function finishRecording() {
+    const type = (chunks[0] && chunks[0].type) || recMime || 'video/mp4';
+    const blob = new Blob(chunks, { type });
+    chunks = [];
+    if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
+    reviewUrl = URL.createObjectURL(blob);
+    reviewVideo.src = reviewUrl;
+    reviewVideo._blob = blob;
+    reviewVideo._type = type;
+    showPanel(reviewPanel);
+  }
+
+  async function saveRecording() {
+    const blob = reviewVideo._blob;
+    const type = reviewVideo._type || 'video/mp4';
+    if (!blob) return;
+    const ext = type.indexOf('mp4') !== -1 ? 'mp4' : (type.indexOf('webm') !== -1 ? 'webm' : 'video');
+    const fname = 'teleprompter-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.' + ext;
+
+    try {
+      if (navigator.canShare) {
+        const file = new File([blob], fname, { type });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'Recording' });
+          return;
+        }
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      console.warn('share failed, falling back to download', e);
+    }
+
+    try {
+      const a = document.createElement('a');
+      a.href = reviewUrl;
+      a.download = fname;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      reviewNote.innerHTML = 'If the video didn’t save, press and hold the video above and choose <strong>Save to Photos</strong>.';
+    } catch (e) {
+      console.error('download failed', e);
+      reviewNote.innerHTML = 'To keep this video, press and hold the video above and choose <strong>Save to Photos</strong>.';
+    }
+  }
+
+  /* ---------- countdown ---------- */
+  function runCountdown(seconds, done) {
+    let n = seconds;
+    countdownEl.textContent = n;
+    countdownEl.classList.add('active');
+    const iv = setInterval(() => {
+      n -= 1;
+      if (n <= 0) {
+        clearInterval(iv);
+        countdownEl.classList.remove('active');
+        done();
+      } else {
+        countdownEl.textContent = n;
+      }
+    }, 1000);
+  }
+
+  /* ---------- wake lock ---------- */
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator && navigator.wakeLock.request) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => {});
+      }
+    } catch (e) { /* not fatal */ }
+  }
+  function releaseWakeLock() {
+    try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (cameraActive && (recording || playing) && document.visibilityState === 'visible' && !wakeLock) {
+      requestWakeLock();
+    }
+  });
+
+  /* ---------- panels ---------- */
+  function showPanel(el) {
+    [introPanel, errPanel, reviewPanel].forEach((p) => p.classList.toggle('show', p === el));
+  }
+  function hidePanels() {
+    [introPanel, errPanel, reviewPanel].forEach((p) => p.classList.remove('show'));
+  }
+  function showError(title, msg) {
+    errTitle.textContent = title;
+    errMsg.textContent = msg;
+    showPanel(errPanel);
+  }
+
+  /* ---------- open / close camera mode ---------- */
+  function openCamera() {
+    try { localStorage.setItem('teleprompter.script', scriptInput.value || ''); } catch (e) {}
+    loadCfg();
+    syncInputsFromCfg();
+    textEl.textContent = scriptInput.value || '';
+    applyCfg();
+    scrollEl.scrollTop = 0;
+    setup.classList.add('hidden');
+    cameraScreen.classList.add('active');
+    cameraActive = true;
+    hidePanels();
+    showPanel(introPanel);
+  }
+
+  async function exitCamera() {
+    stopRecording();
+    setPlaying(false);
+    releaseWakeLock();
+    stopStream(stream);
+    stream = null;
+    video.srcObject = null;
+    if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
+    reviewVideo.removeAttribute('src');
+    reviewVideo.load();
+    sheet.classList.remove('open');
+    hidePanels();
+    cameraScreen.classList.remove('active');
+    cameraActive = false;
+    setup.classList.remove('hidden');
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); }
+  }
+
+  /* ---------- events ---------- */
+  cameraBtn.addEventListener('click', openCamera);
+
+  introGo.addEventListener('click', async () => {
+    const ok = await startCamera();
+    if (ok) hidePanels();
+  });
+  introBack.addEventListener('click', exitCamera);
+  errBack.addEventListener('click', exitCamera);
+  errRetry.addEventListener('click', async () => {
+    const ok = await startCamera();
+    if (ok) hidePanels();
+  });
+
+  closeBtn.addEventListener('click', exitCamera);
+  flipBtn.addEventListener('click', flipCamera);
+  recordBtn.addEventListener('click', onRecordBtn);
+  playBtn.addEventListener('click', () => setPlaying(!playing));
+
+  settingsBtn.addEventListener('click', () => sheet.classList.toggle('open'));
+  sheetClose.addEventListener('click', () => sheet.classList.remove('open'));
+
+  function bumpSpeed(d) {
+    cfg.speed = Math.min(10, Math.max(1, Math.round((Number(cfg.speed) + d) * 2) / 2));
+    speedInput.value = cfg.speed;
+    applyCfg();
+  }
+  function bumpFont(d) {
+    cfg.font = Math.min(80, Math.max(20, Number(cfg.font) + d));
+    fontInput.value = cfg.font;
+    applyCfg();
+  }
+  speedDown.addEventListener('click', () => bumpSpeed(-0.5));
+  speedUp.addEventListener('click', () => bumpSpeed(0.5));
+  fontDown.addEventListener('click', () => bumpFont(-2));
+  fontUp.addEventListener('click', () => bumpFont(2));
+
+  opacityInput.addEventListener('input', () => { cfg.opacity = +opacityInput.value; applyCfg(); });
+  boxWInput.addEventListener('input', () => { cfg.boxW = +boxWInput.value; applyCfg(); });
+  boxHInput.addEventListener('input', () => { cfg.boxH = +boxHInput.value; applyCfg(); });
+  fontInput.addEventListener('input', () => { cfg.font = +fontInput.value; applyCfg(); });
+  lineInput.addEventListener('input', () => { cfg.line = +lineInput.value; applyCfg(); });
+  speedInput.addEventListener('input', () => { cfg.speed = +speedInput.value; applyCfg(); });
+  mirrorTextInput.addEventListener('change', () => { cfg.mirrorText = mirrorTextInput.checked; applyCfg(); });
+  mirrorPreviewInput.addEventListener('change', () => { cfg.mirrorPreview = mirrorPreviewInput.checked; applyCfg(); });
+
+  resetPosBtn.addEventListener('click', () => {
+    cfg.posX = null; cfg.posY = null;
+    positionBox();
+    saveCfg();
+    sheet.classList.remove('open');
+  });
+  fsBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      cameraScreen.requestFullscreen && cameraScreen.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  });
+
+  reviewRetake.addEventListener('click', () => {
+    if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
+    reviewVideo.removeAttribute('src');
+    reviewVideo.load();
+    reviewNote.innerHTML = 'Your video is ready. Use <strong>Save / Share</strong> to keep it in Photos or send it on.';
+    scrollEl.scrollTop = 0;
+    hidePanels();
+    if (!stream) startCamera();
+  });
+  reviewSave.addEventListener('click', saveRecording);
+  reviewBack.addEventListener('click', exitCamera);
+
+  window.addEventListener('resize', () => {
+    if (!cameraActive) return;
+    clampPos();
+    box.style.left = cfg.posX + 'px';
+    box.style.top = cfg.posY + 'px';
+  });
+  window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+      if (!cameraActive) return;
+      clampPos();
+      box.style.left = cfg.posX + 'px';
+      box.style.top = cfg.posY + 'px';
+    }, 300);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (!cameraActive) return;
+    if (e.code === 'Escape') { exitCamera(); }
+    else if (e.code === 'Space') { e.preventDefault(); setPlaying(!playing); }
+  });
+})();
+
+/* ---------- service worker ---------- */
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch(() => {});
