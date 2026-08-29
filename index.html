@@ -331,10 +331,20 @@
   }
   #camVideo.mirror { transform: scaleX(-1); }
 
-  /* Teleprompter overlay - layered above camera via normal DOM, never part of the stream */
-  #camPrompter {
+  /* Teleprompter overlay - layered above camera via normal DOM, never part of the stream.
+     Transform responsibilities are kept separate:
+       #camShell    -> x/y positioning + dragging + viewport clamping   (NO transform)
+       #camPrompter -> independent rotation only                        (transform: rotate)
+       #camText     -> mirror-text only                                 (transform: scaleX)
+       #camVideo    -> preview-mirror only                              (transform: scaleX)  */
+  #camShell {
     position: absolute;
     z-index: 20;
+    top: 0;
+    left: 0;
+  }
+  #camPrompter {
+    position: relative;
     border-radius: 12px;
     background: rgba(0, 0, 0, 0.35);
     overflow: hidden;
@@ -342,14 +352,18 @@
     flex-direction: column;
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
     touch-action: none;
+    transform: rotate(var(--cam-rot, 0deg));
+    transform-origin: 50% 50%;
   }
+  #camPrompter.rot-quarter #camScroll { touch-action: none; }
   #camDrag {
-    height: 34px;
+    height: 38px;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: 8px;
+    padding: 0 6px 0 10px;
     color: rgba(255,255,255,0.75);
     font-size: 11px;
     letter-spacing: 0.04em;
@@ -357,6 +371,24 @@
     cursor: move;
     user-select: none;
     touch-action: none;
+  }
+  #camDragLabel { pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #camRotateBtn {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #fff;
+    background: rgba(255,255,255,0.16);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 7px;
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   #camScroll {
     flex: 1 1 auto;
@@ -644,9 +676,14 @@ Good luck out there.</textarea>
 <div id="camera">
   <video id="camVideo" playsinline autoplay muted webkit-playsinline></video>
 
-  <div id="camPrompter">
-    <div id="camDrag">&#8942;&#8942;&#8942; drag to reposition near the lens</div>
-    <div id="camScroll"><div id="camText"></div></div>
+  <div id="camShell">
+    <div id="camPrompter">
+      <div id="camDrag">
+        <span id="camDragLabel">&#8942;&#8942;&#8942; drag &middot; keep near the lens</span>
+        <button type="button" id="camRotateBtn" aria-label="Rotate teleprompter">&#8635; <span id="camRotVal">0&deg;</span></button>
+      </div>
+      <div id="camScroll"><div id="camText"></div></div>
+    </div>
   </div>
 
   <div id="camTop">
@@ -692,6 +729,15 @@ Good luck out there.</textarea>
       <label>Scroll speed <span id="camSpeedOut" style="color:var(--text)">3.0</span></label>
       <input type="range" id="camSpeed" min="1" max="10" step="0.5" value="3">
     </div>
+    <div class="field">
+      <label for="camOrient">Teleprompter orientation <span id="camOrientHint" style="color:var(--muted)">(camera is unaffected)</span></label>
+      <select id="camOrient">
+        <option value="0">Normal (0&deg;)</option>
+        <option value="90">Rotate right (90&deg;)</option>
+        <option value="180">Upside down (180&deg;)</option>
+        <option value="270">Rotate left (270&deg;)</option>
+      </select>
+    </div>
     <div class="field toggle-row">
       <input type="checkbox" id="camMirrorText">
       <label for="camMirrorText" style="margin:0;">Mirror teleprompter text (for beam-splitter glass)</label>
@@ -700,8 +746,14 @@ Good luck out there.</textarea>
       <input type="checkbox" id="camMirrorPreview" checked>
       <label for="camMirrorPreview" style="margin:0;">Mirror front-camera preview (recording stays un-mirrored)</label>
     </div>
+    <div class="field">
+      <label>Camera quality</label>
+      <div id="camCaptureOut" style="color:var(--text);font-size:13px;">Capture: reported once the camera starts</div>
+      <div id="camRecOut" style="color:var(--muted);font-size:12px;margin-top:3px;">Recording: shown after your first take</div>
+    </div>
     <div class="sheet-actions">
       <button id="camResetPos">Reset position</button>
+      <button id="camResetOverlay">Reset overlay</button>
       <button id="camFsBtn">Fullscreen</button>
     </div>
   </div>
@@ -1214,8 +1266,11 @@ Good luck out there.</textarea>
   const cameraScreen = document.getElementById('camera');
   const video = document.getElementById('camVideo');
 
+  const shell = document.getElementById('camShell');
   const box = document.getElementById('camPrompter');
   const dragH = document.getElementById('camDrag');
+  const rotateBtn = document.getElementById('camRotateBtn');
+  const rotVal = document.getElementById('camRotVal');
   const scrollEl = document.getElementById('camScroll');
   const textEl = document.getElementById('camText');
 
@@ -1243,7 +1298,11 @@ Good luck out there.</textarea>
   const speedInput = document.getElementById('camSpeed');
   const mirrorTextInput = document.getElementById('camMirrorText');
   const mirrorPreviewInput = document.getElementById('camMirrorPreview');
+  const orientInput = document.getElementById('camOrient');
+  const captureOut = document.getElementById('camCaptureOut');
+  const recOut = document.getElementById('camRecOut');
   const resetPosBtn = document.getElementById('camResetPos');
+  const resetOverlayBtn = document.getElementById('camResetOverlay');
   const fsBtn = document.getElementById('camFsBtn');
 
   const opacityOut = document.getElementById('camOpacityOut');
@@ -1286,9 +1345,15 @@ Good luck out there.</textarea>
   let lastTs = null;
   let playing = false;
 
+  let camActual = { width: null, height: null, frameRate: null, facingMode: null };
+  let recRequestedVbps = null;
+  let recActualVbps = null;
+
+  const ALLOWED_ROT = [0, 90, 180, 270];
+
   let cfg = {
     opacity: 35, boxW: 88, boxH: 42, font: 40, line: 1.5, speed: 3,
-    mirrorText: false, mirrorPreview: true,
+    mirrorText: false, mirrorPreview: true, rotation: 0,
     posX: null, posY: null
   };
 
@@ -1298,6 +1363,7 @@ Good luck out there.</textarea>
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (raw) Object.assign(cfg, JSON.parse(raw));
     } catch (e) {}
+    if (ALLOWED_ROT.indexOf(cfg.rotation) === -1) cfg.rotation = 0;
   }
   function saveCfg() {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) {}
@@ -1312,6 +1378,12 @@ Good luck out there.</textarea>
     speedInput.value = cfg.speed;
     mirrorTextInput.checked = cfg.mirrorText;
     mirrorPreviewInput.checked = cfg.mirrorPreview;
+    syncRotationUI();
+  }
+
+  function syncRotationUI() {
+    orientInput.value = String(cfg.rotation);
+    rotVal.textContent = cfg.rotation + '°';
   }
 
   function applyCfg() {
@@ -1328,17 +1400,33 @@ Good luck out there.</textarea>
     textEl.style.fontSize = cfg.font + 'px';
     textEl.style.lineHeight = cfg.line;
     textEl.classList.toggle('mirrored', cfg.mirrorText);
+    applyRotation();
     applyPreviewMirror();
     positionBox();
     saveCfg();
   }
 
   function applyPreviewMirror() {
+    // camera preview mirror only; independent of overlay rotation and text mirror
     const shouldMirror = facing === 'user' && cfg.mirrorPreview;
     video.classList.toggle('mirror', shouldMirror);
   }
 
-  /* ---------- overlay box positioning ---------- */
+  function applyRotation() {
+    // overlay rotation only; the sole owner of #camPrompter's transform
+    box.style.setProperty('--cam-rot', cfg.rotation + 'deg');
+    box.classList.toggle('rot-quarter', cfg.rotation === 90 || cfg.rotation === 270);
+    syncRotationUI();
+  }
+
+  function rotateStep() {
+    cfg.rotation = ALLOWED_ROT[(ALLOWED_ROT.indexOf(cfg.rotation) + 1) % ALLOWED_ROT.length];
+    applyRotation();
+    positionBox();
+    saveCfg();
+  }
+
+  /* ---------- overlay box positioning (screen-space, on #camShell) ---------- */
   function defaultPos() {
     const w = window.innerWidth * cfg.boxW / 100;
     return {
@@ -1346,37 +1434,79 @@ Good luck out there.</textarea>
       y: Math.max(56 + (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 0), window.innerHeight * 0.10)
     };
   }
+
+  // Actual on-screen footprint of the (possibly rotated) overlay. The shell is
+  // placed at posX/posY with the unrotated W x H; #camPrompter rotates about its
+  // own centre, so a 90/270 turn swaps the visual width/height.
+  function visualBox() {
+    const W = box.offsetWidth || window.innerWidth * cfg.boxW / 100;
+    const H = box.offsetHeight || window.innerHeight * cfg.boxH / 100;
+    const quarter = (cfg.rotation === 90 || cfg.rotation === 270);
+    const vw = quarter ? H : W;
+    const vh = quarter ? W : H;
+    const cx = (cfg.posX || 0) + W / 2;
+    const cy = (cfg.posY || 0) + H / 2;
+    return { left: cx - vw / 2, top: cy - vh / 2, width: vw, height: vh };
+  }
+
   function positionBox() {
     if (cfg.posX === null || cfg.posY === null) {
       const d = defaultPos();
       cfg.posX = d.x; cfg.posY = d.y;
     }
     clampPos();
-    box.style.left = cfg.posX + 'px';
-    box.style.top = cfg.posY + 'px';
+    updateShellPos();
   }
+
+  function updateShellPos() {
+    shell.style.left = Math.round(cfg.posX) + 'px';
+    shell.style.top = Math.round(cfg.posY) + 'px';
+  }
+
   function clampPos() {
-    const bw = box.offsetWidth || window.innerWidth * cfg.boxW / 100;
-    const bh = box.offsetHeight || window.innerHeight * cfg.boxH / 100;
-    const maxX = Math.max(0, window.innerWidth - bw);
-    const maxY = Math.max(0, window.innerHeight - Math.min(bh, 120));
-    cfg.posX = Math.min(Math.max(0, cfg.posX), maxX);
-    cfg.posY = Math.min(Math.max(0, cfg.posY), maxY);
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const minVisible = 52;              // always keep at least this much reachable
+    const vb = visualBox();
+
+    // horizontal
+    if (vb.width <= vw) {
+      if (vb.left < 0) cfg.posX += -vb.left;
+      else if (vb.left + vb.width > vw) cfg.posX -= (vb.left + vb.width - vw);
+    } else {
+      if (vb.left > 0) cfg.posX -= vb.left;
+      else if (vb.left + vb.width < vw) cfg.posX += (vw - (vb.left + vb.width));
+    }
+
+    // vertical: fully contain when it fits; otherwise pin the top and keep a
+    // reachable strip on-screen. Never push the top above the viewport.
+    if (vb.height <= vh) {
+      if (vb.top < 0) cfg.posY += -vb.top;
+      else if (vb.top + vb.height > vh) cfg.posY -= (vb.top + vb.height - vh);
+    } else {
+      if (vb.top > 0) cfg.posY -= vb.top;
+      else if (vb.top + vb.height < vh) cfg.posY += (vh - (vb.top + vb.height));
+    }
+    const reVb = visualBox();
+    if (reVb.top < 0 && reVb.height <= vh) cfg.posY += -reVb.top;
+    if (reVb.top > vh - minVisible) cfg.posY -= (reVb.top - (vh - minVisible));
+    if (reVb.top + reVb.height < minVisible) cfg.posY += (minVisible - (reVb.top + reVb.height));
   }
 
   let drag = null;
   dragH.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('#camRotateBtn')) return;   // rotate button must not start a drag
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: cfg.posX, oy: cfg.posY };
     try { dragH.setPointerCapture(e.pointerId); } catch (err) {}
     e.preventDefault();
   });
   dragH.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
+    // pure screen-space delta - never transformed by overlay orientation
     cfg.posX = drag.ox + (e.clientX - drag.x);
     cfg.posY = drag.oy + (e.clientY - drag.y);
     clampPos();
-    box.style.left = cfg.posX + 'px';
-    box.style.top = cfg.posY + 'px';
+    updateShellPos();
     e.preventDefault();
   });
   function endDrag(e) {
@@ -1388,6 +1518,9 @@ Good luck out there.</textarea>
   }
   dragH.addEventListener('pointerup', endDrag);
   dragH.addEventListener('pointercancel', endDrag);
+
+  rotateBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  rotateBtn.addEventListener('click', (e) => { e.stopPropagation(); rotateStep(); });
 
   /* ---------- scroll engine (requestAnimationFrame) ---------- */
   function tick(ts) {
@@ -1431,22 +1564,77 @@ Good luck out there.</textarea>
     }
     stopStream(stream);
     stream = null;
+
+    // Prefer a high-quality 1080p / 30fps stream, but only with `ideal` hints so
+    // Safari can fall back gracefully - never `exact`, never 4K.
+    const hqVideo = {
+      facingMode: { ideal: facing },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30 }
+    };
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facing } },
-        audio: true
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ video: hqVideo, audio: true });
     } catch (err) {
-      console.error('getUserMedia failed:', err);
-      handleCamError(err);
-      return false;
+      if (err && err.name === 'OverconstrainedError') {
+        // extremely unlikely with ideal-only hints, but stay safe
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: facing } }, audio: true
+          });
+        } catch (err2) {
+          console.error('getUserMedia failed:', err2);
+          handleCamError(err2);
+          return false;
+        }
+      } else {
+        console.error('getUserMedia failed:', err);
+        handleCamError(err);
+        return false;
+      }
     }
+
+    readCameraSettings();
     video.srcObject = stream;
     video.setAttribute('playsinline', '');
     video.muted = true;
     try { await video.play(); } catch (e) { /* autoplay guard */ }
     applyPreviewMirror();
     return true;
+  }
+
+  // Read the ACTUAL negotiated track settings (not what we requested).
+  function readCameraSettings() {
+    camActual = { width: null, height: null, frameRate: null, facingMode: null };
+    try {
+      const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+      if (track && track.getSettings) {
+        const s = track.getSettings() || {};
+        camActual.width = s.width || null;
+        camActual.height = s.height || null;
+        camActual.frameRate = s.frameRate || null;
+        camActual.facingMode = s.facingMode || facing;
+        // Safe diagnostic - no deviceId / groupId.
+        console.log('Camera stream:',
+          (camActual.width && camActual.height) ? camActual.width + ' x ' + camActual.height : 'resolution not reported',
+          camActual.frameRate ? Math.round(camActual.frameRate) + ' fps' : '',
+          camActual.facingMode || '');
+      }
+    } catch (e) { /* getSettings unsupported - fine */ }
+    updateQualityLabel();
+  }
+
+  function updateQualityLabel() {
+    const parts = [];
+    if (camActual.width && camActual.height) parts.push(camActual.width + ' × ' + camActual.height);
+    if (camActual.frameRate) parts.push(Math.round(camActual.frameRate) + ' fps');
+    captureOut.textContent = 'Capture: ' + (parts.length ? parts.join(' · ') : 'not reported by this browser');
+
+    if (recActualVbps) {
+      recOut.textContent = 'Recording: ~' + Math.round(recActualVbps / 1e6) + ' Mbps video';
+    } else if (recRequestedVbps) {
+      recOut.textContent = 'Recording: ~' + Math.round(recRequestedVbps / 1e6) + ' Mbps requested';
+    }
   }
 
   function handleCamError(err) {
@@ -1524,21 +1712,47 @@ Good luck out there.</textarea>
     if (!stream) return false;
     chunks = [];
     recMime = pickMime();
-    let opts = {};
-    if (recMime) opts.mimeType = recMime;
+
+    // Prefer a high-quality bitrate for 1080p; fall back safely if the browser
+    // rejects the options object. Recording reliability always wins over bitrate.
+    const TARGET_VBPS = 12000000;   // ~12 Mbps video
+    const TARGET_ABPS = 128000;     // 128 kbps audio
+    recRequestedVbps = TARGET_VBPS;
+    recActualVbps = null;
+
+    const hqOpts = { videoBitsPerSecond: TARGET_VBPS, audioBitsPerSecond: TARGET_ABPS };
+    if (recMime) hqOpts.mimeType = recMime;
+
+    recorder = null;
     try {
-      recorder = new MediaRecorder(stream, opts);
+      recorder = new MediaRecorder(stream, hqOpts);              // 1) mime + bitrate
     } catch (e1) {
       try {
-        recorder = new MediaRecorder(stream);
-        recMime = recorder.mimeType || '';
+        recorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : {}); // 2) mime only
+        recMime = recorder.mimeType || recMime;
+        recRequestedVbps = null;
       } catch (e2) {
-        console.error('MediaRecorder init failed:', e2);
-        showError('Recording couldn’t start',
-          'This browser can’t record video. Try the latest version of Safari.');
-        return false;
+        try {
+          recorder = new MediaRecorder(stream);                 // 3) plain
+          recMime = recorder.mimeType || '';
+          recRequestedVbps = null;
+        } catch (e3) {
+          console.error('MediaRecorder init failed:', e3);
+          showError('Recording couldn’t start',
+            'This browser can’t record video. Try the latest version of Safari.');
+          return false;
+        }
       }
     }
+
+    try {
+      if (recorder.videoBitsPerSecond) {
+        recActualVbps = recorder.videoBitsPerSecond;
+        console.log('Recording bitrate:', Math.round(recActualVbps / 1e6) + ' Mbps video',
+          recorder.audioBitsPerSecond ? Math.round(recorder.audioBitsPerSecond / 1e3) + ' kbps audio' : '');
+      }
+    } catch (e) { /* not reported - fine */ }
+    updateQualityLabel();
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     recorder.onstop = finishRecording;
     recorder.onerror = (e) => { console.error('recorder error', e); };
@@ -1672,6 +1886,10 @@ Good luck out there.</textarea>
     loadCfg();
     syncInputsFromCfg();
     textEl.textContent = scriptInput.value || '';
+    camActual = { width: null, height: null, frameRate: null, facingMode: null };
+    recRequestedVbps = null; recActualVbps = null;
+    captureOut.textContent = 'Capture: reported once the camera starts';
+    recOut.textContent = 'Recording: shown after your first take';
     applyCfg();
     scrollEl.scrollTop = 0;
     setup.classList.add('hidden');
@@ -1744,11 +1962,26 @@ Good luck out there.</textarea>
   speedInput.addEventListener('input', () => { cfg.speed = +speedInput.value; applyCfg(); });
   mirrorTextInput.addEventListener('change', () => { cfg.mirrorText = mirrorTextInput.checked; applyCfg(); });
   mirrorPreviewInput.addEventListener('change', () => { cfg.mirrorPreview = mirrorPreviewInput.checked; applyCfg(); });
+  orientInput.addEventListener('change', () => {
+    const v = parseInt(orientInput.value, 10);
+    cfg.rotation = ALLOWED_ROT.indexOf(v) === -1 ? 0 : v;
+    applyRotation();
+    positionBox();
+    saveCfg();
+  });
 
   resetPosBtn.addEventListener('click', () => {
     cfg.posX = null; cfg.posY = null;
     positionBox();
     saveCfg();
+    sheet.classList.remove('open');
+  });
+  resetOverlayBtn.addEventListener('click', () => {
+    // resets position + dimensions + rotation only; leaves opacity/font/line/speed/mirror alone
+    cfg.posX = null; cfg.posY = null;
+    cfg.boxW = 88; cfg.boxH = 42; cfg.rotation = 0;
+    boxWInput.value = 88; boxHInput.value = 42;
+    applyCfg();
     sheet.classList.remove('open');
   });
   fsBtn.addEventListener('click', () => {
@@ -1771,20 +2004,16 @@ Good luck out there.</textarea>
   reviewSave.addEventListener('click', saveRecording);
   reviewBack.addEventListener('click', exitCamera);
 
-  window.addEventListener('resize', () => {
+  // Device orientation and teleprompter rotation are independent: never reset
+  // cfg.rotation here - just recompute geometry and clamp the rotated overlay
+  // back into the new viewport.
+  function reclampToViewport() {
     if (!cameraActive) return;
     clampPos();
-    box.style.left = cfg.posX + 'px';
-    box.style.top = cfg.posY + 'px';
-  });
-  window.addEventListener('orientationchange', () => {
-    setTimeout(() => {
-      if (!cameraActive) return;
-      clampPos();
-      box.style.left = cfg.posX + 'px';
-      box.style.top = cfg.posY + 'px';
-    }, 300);
-  });
+    updateShellPos();
+  }
+  window.addEventListener('resize', reclampToViewport);
+  window.addEventListener('orientationchange', () => setTimeout(reclampToViewport, 300));
 
   document.addEventListener('keydown', (e) => {
     if (!cameraActive) return;
