@@ -522,6 +522,42 @@
   }
   #camPlayBtn { min-width: 74px; }
 
+  /* Microphone level / status pill (diagnostic only - never part of the recording) */
+  #micMeter {
+    position: absolute;
+    left: calc(14px + var(--safe-left));
+    bottom: calc(112px + var(--safe-bottom));
+    z-index: 40;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 6px 12px;
+    border-radius: 18px;
+    background: rgba(0,0,0,0.58);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #fff;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #micMeter.show { display: flex; }
+  .mm-dot { width: 9px; height: 9px; border-radius: 50%; background: #2fbf71; flex: 0 0 auto; }
+  #micMeter.warn .mm-dot { background: #e0a100; }
+  #micMeter.bad .mm-dot { background: var(--rec); }
+  .mm-bar { width: 70px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.22); overflow: hidden; }
+  .mm-fill { display: block; height: 100%; width: 0; background: #2fbf71; }
+  #micMeter.nometer .mm-bar, #micMeter.warn .mm-bar, #micMeter.bad .mm-bar { display: none; }
+  .st-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-bottom: 5px; }
+  .st-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: #6b6c75; }
+  .st-dot.ok { background: #2fbf71; }
+  .st-dot.warn { background: #e0a100; }
+  .st-dot.bad { background: var(--rec); }
+  .st-info { font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 4px; }
+
   /* Settings bottom sheet */
   #camSheet {
     position: absolute;
@@ -734,6 +770,11 @@ Good luck out there.</textarea>
     <button id="camSpeedUp" title="Faster">+</button>
   </div>
 
+  <button type="button" id="micMeter" aria-label="Microphone level. Tap to reconnect if the microphone is not detected.">
+    <span class="mm-dot"></span><span id="micLabel">MIC</span>
+    <span class="mm-bar"><span class="mm-fill" id="micFill"></span></span>
+  </button>
+
   <div id="camSheet">
     <h2>Settings <button id="camSheetClose" style="padding:4px 12px;">Done</button></h2>
     <div class="field">
@@ -777,6 +818,22 @@ Good luck out there.</textarea>
       <input type="checkbox" id="camMirrorPreview" checked>
       <label for="camMirrorPreview" style="margin:0;">Mirror front-camera preview (recording stays un-mirrored)</label>
     </div>
+    <div class="field" id="camStatusField">
+      <label>Status</label>
+      <div class="st-row"><span class="st-dot" id="stCamDot"></span><span id="stCam">Camera: not started</span></div>
+      <div class="st-row"><span class="st-dot" id="stMicDot"></span><span id="stMic">Microphone: not started</span></div>
+      <div class="st-row"><span class="st-dot" id="stRecDot"></span><span id="stRec">Recording: not recording</span></div>
+      <div class="st-info" id="stMicInfo"></div>
+      <div id="camMicSelectRow" style="display:none;margin-top:8px;">
+        <label for="camMicSelect">Microphone input</label>
+        <select id="camMicSelect"></select>
+      </div>
+      <div class="toggle-row" style="margin-top:10px;">
+        <input type="checkbox" id="camMicMeter" checked>
+        <label for="camMicMeter" style="margin:0;">Show microphone level meter</label>
+      </div>
+      <button id="camReconnect" style="margin-top:10px;">Reconnect microphone &amp; restart camera</button>
+    </div>
     <div class="field">
       <label>Camera quality</label>
       <div id="camCaptureOut" style="color:var(--text);font-size:13px;">Capture: reported once the camera starts</div>
@@ -796,6 +853,10 @@ Good luck out there.</textarea>
     <h2>Camera + Teleprompter</h2>
     <p>Camera and microphone access are needed to record your video. Your recording stays on your device unless you choose to share it &mdash; nothing is uploaded.</p>
     <p>Your script will float over the camera preview so you can read while looking near the lens. The script is <strong>not</strong> included in the saved video.</p>
+    <div id="camRecoverRow" style="display:none;margin-top:6px;">
+      <p id="camRecoverNote"></p>
+      <button id="camRecover">Recover unfinished recording</button>
+    </div>
     <div class="panel-actions">
       <button id="camIntroBack">Back</button>
       <button class="primary" id="camIntroGo">Allow camera &amp; microphone</button>
@@ -816,6 +877,7 @@ Good luck out there.</textarea>
   <div class="cam-panel" id="camReview">
     <h2>Save or share your recording</h2>
     <video id="reviewVideo" controls playsinline></video>
+    <p id="reviewInfo" style="color:var(--text);font-size:13px;margin:0 0 8px;"></p>
     <p id="reviewNote">Your video is ready. Use <strong>Save / Share</strong> to keep it in Photos or send it on.</p>
     <div class="panel-actions">
       <button id="reviewRetake">Retake</button>
@@ -1364,7 +1426,6 @@ Good luck out there.</textarea>
   let stream = null;
   let facing = 'user';
   let recorder = null;
-  let chunks = [];
   let recording = false;
   let recMime = '';
   let recStart = 0;
@@ -1380,12 +1441,181 @@ Good luck out there.</textarea>
   let camActual = { width: null, height: null, frameRate: null, facingMode: null };
   let recRequestedVbps = null;
   let recActualVbps = null;
+  let recActualAbps = null;
+
+  /* ---------- recording spool (IndexedDB, best effort) ----------
+     Every MediaRecorder timeslice is written to IndexedDB as it arrives, so a long
+     take is not held as one giant in-memory array and an interrupted take can be
+     recovered. If IndexedDB is unavailable or errors, chunks simply stay in memory.
+     Safari cannot stream a recording straight into Photos; the finished file is
+     assembled once at Stop and handed to the Share Sheet. */
+  const spool = (function () {
+    const DB_NAME = 'teleprompter-rec', CHUNKS = 'chunks', META = 'meta';
+    let db = null;
+    let active = false;
+    let seq = 0;
+    let bytes = 0;
+    const inflight = new Map();   // seq -> blob while its write is pending
+    let memTail = [];             // [{seq, blob}] chunks that could not be spooled
+    let pending = [];
+
+    function open() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) { resolve(null); return; }
+        let req;
+        try { req = indexedDB.open(DB_NAME, 1); } catch (e) { resolve(null); return; }
+        req.onupgradeneeded = () => {
+          const d = req.result;
+          if (!d.objectStoreNames.contains(CHUNKS)) d.createObjectStore(CHUNKS, { autoIncrement: true });
+          if (!d.objectStoreNames.contains(META)) d.createObjectStore(META);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      });
+    }
+    function tx(stores, mode, fn) {
+      return new Promise((resolve) => {
+        if (!db) { resolve(false); return; }
+        let t;
+        try { t = db.transaction(stores, mode); } catch (e) { resolve(false); return; }
+        t.oncomplete = () => resolve(true);
+        t.onerror = () => resolve(false);
+        t.onabort = () => resolve(false);
+        try { fn(t); } catch (e) { try { t.abort(); } catch (_) {} resolve(false); }
+      });
+    }
+    function readAll(store) {
+      return new Promise((resolve) => {
+        if (!db) { resolve([]); return; }
+        try {
+          const r = db.transaction([store], 'readonly').objectStore(store).getAll();
+          r.onsuccess = () => resolve(r.result || []);
+          r.onerror = () => resolve([]);
+        } catch (e) { resolve([]); }
+      });
+    }
+    async function clear() {
+      memTail = []; inflight.clear(); seq = 0; bytes = 0; active = false;
+      if (!db) db = await open();
+      if (!db) return;
+      await tx([CHUNKS, META], 'readwrite', (t) => { t.objectStore(CHUNKS).clear(); t.objectStore(META).clear(); });
+    }
+    async function begin(meta) {
+      await clear();
+      if (!db) return false;
+      active = await tx([META], 'readwrite', (t) =>
+        t.objectStore(META).put(Object.assign({ started: Date.now(), finalized: false }, meta || {}), 'current'));
+      return active;
+    }
+    function add(blob) {
+      const n = seq++;
+      bytes += blob.size;
+      if (!active) { memTail.push({ seq: n, blob }); return; }
+      inflight.set(n, blob);
+      const p = tx([CHUNKS], 'readwrite', (t) => t.objectStore(CHUNKS).add({ seq: n, blob })).then((ok) => {
+        if (!ok) {
+          console.warn('Spool write failed; keeping the rest of this take in memory');
+          memTail.push({ seq: n, blob: inflight.get(n) });
+          active = false;
+        }
+        inflight.delete(n);
+        const i = pending.indexOf(p);
+        if (i > -1) pending.splice(i, 1);
+      });
+      pending.push(p);
+    }
+    async function flush() {
+      while (pending.length) await Promise.all(pending.slice());
+    }
+    async function assemble() {
+      await flush();
+      const recs = (await readAll(CHUNKS)).concat(memTail);
+      recs.sort((a, b) => a.seq - b.seq);
+      return recs.map((r) => r.blob).filter(Boolean);
+    }
+    async function finalize(extra) {
+      if (!db) return;
+      await tx([META], 'readwrite', (t) => {
+        const st = t.objectStore(META);
+        const g = st.get('current');
+        g.onsuccess = () => st.put(Object.assign(g.result || {}, { finalized: true }, extra || {}), 'current');
+      });
+    }
+    async function peek() {
+      try {
+        if (!db) db = await open();
+        if (!db) return null;
+        const meta = await new Promise((res) => {
+          try {
+            const r = db.transaction([META], 'readonly').objectStore(META).get('current');
+            r.onsuccess = () => res(r.result || null);
+            r.onerror = () => res(null);
+          } catch (e) { res(null); }
+        });
+        if (!meta) return null;
+        const count = await new Promise((res) => {
+          try {
+            const r = db.transaction([CHUNKS], 'readonly').objectStore(CHUNKS).count();
+            r.onsuccess = () => res(r.result || 0);
+            r.onerror = () => res(0);
+          } catch (e) { res(0); }
+        });
+        return count > 0 ? { meta, count } : null;
+      } catch (e) { return null; }
+    }
+    return {
+      begin, add, flush, assemble, finalize, clear, peek,
+      get bytes() { return bytes; },
+      get durable() { return active; }
+    };
+  })();
+
+  /* ---------- camera / audio state ---------- */
+  let camState = 'none';        // none | starting | ready | lost
+  let micState = 'none';        // none | ok | changed
+  let micInfo = { label: '', channels: null, sampleRate: null, deviceId: null, echo: null, ns: null, agc: null };
+  let audioInputs = [];
+  let deviceSig = '';
+  let selectedMicId = null;
+  let micNote = '';
+  let audioCtx = null, analyser = null, meterBuf = null, meterTimer = null;
+  let micHeardAt = 0;
+  let devChangeTimer = null;
+  let micLostDuringRec = false;
+  let restarting = false;
+  let counting = false;
+  let mediaGen = 0;
+  let wasHidden = false;
+  let reviewBlob = null;
+  let reviewFile = null;
+  let recEnd = 0;
+  let recFailed = false;
+  let recPaused = false;
+  let discardNext = false;
+  let finishing = false;
+
+  const meterEl = document.getElementById('micMeter');
+  const micLabel = document.getElementById('micLabel');
+  const micFill = document.getElementById('micFill');
+  const stCam = document.getElementById('stCam'), stCamDot = document.getElementById('stCamDot');
+  const stMic = document.getElementById('stMic'), stMicDot = document.getElementById('stMicDot');
+  const stRec = document.getElementById('stRec'), stRecDot = document.getElementById('stRecDot');
+  const stMicInfo = document.getElementById('stMicInfo');
+  const micSelectRow = document.getElementById('camMicSelectRow');
+  const micSelect = document.getElementById('camMicSelect');
+  const micMeterInput = document.getElementById('camMicMeter');
+  const reconnectBtn = document.getElementById('camReconnect');
+  const reviewInfo = document.getElementById('reviewInfo');
+  const recoverRow = document.getElementById('camRecoverRow');
+  const recoverNote = document.getElementById('camRecoverNote');
+  const recoverBtn = document.getElementById('camRecover');
 
   const ALLOWED_ROT = [0, 90, 180, 270];
 
   let cfg = {
     opacity: 35, boxW: 88, boxH: 42, font: 40, line: 1.5, speed: 3,
-    mirrorText: false, mirrorPreview: true, rotation: 0,
+    mirrorText: false, mirrorPreview: true, rotation: 0, micMeter: true,
     posX: null, posY: null
   };
 
@@ -1410,6 +1640,7 @@ Good luck out there.</textarea>
     speedInput.value = cfg.speed;
     mirrorTextInput.checked = cfg.mirrorText;
     mirrorPreviewInput.checked = cfg.mirrorPreview;
+    micMeterInput.checked = cfg.micMeter !== false;
     syncRotationUI();
   }
 
@@ -1595,51 +1826,335 @@ Good luck out there.</textarea>
     if (s) s.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
   }
 
+  function videoConstraints() {
+    // ideal-only hints so Safari can fall back; never `exact`, never 4K
+    return { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
+  }
+
+  // Detailed -> simpler -> plain audio constraints. Unsupported optional
+  // constraints must never stop the camera from starting.
+  function audioTiers() {
+    const pick = selectedMicId ? { deviceId: { ideal: selectedMicId } } : {};
+    return [
+      Object.assign({
+        echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+        channelCount: { ideal: 1 }, sampleRate: { ideal: 48000 }, sampleSize: { ideal: 16 }
+      }, pick),
+      Object.assign({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }, pick),
+      selectedMicId ? { deviceId: { ideal: selectedMicId } } : true,
+      true
+    ];
+  }
+
+  async function acquireMedia() {
+    const gum = (c) => navigator.mediaDevices.getUserMedia(c);
+    const denied = (e) => e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+    const attempts = audioTiers().map((a) => ({ video: videoConstraints(), audio: a }));
+    attempts.push({ video: { facingMode: { ideal: facing } }, audio: true });
+    let firstErr = null;
+    for (let i = 0; i < attempts.length; i++) {
+      try {
+        const st = await gum(attempts[i]);
+        if (i > 0) console.warn('getUserMedia: succeeded with fallback constraint tier', i);
+        return st;
+      } catch (e) {
+        if (!firstErr) firstErr = e;
+        console.warn('getUserMedia tier', i, 'failed:', e && e.name);
+        if (denied(e)) break;
+      }
+    }
+    // A missing/blocked microphone must not take the camera preview down with it.
+    try {
+      const st = await gum({ video: videoConstraints(), audio: false });
+      console.warn('Camera started WITHOUT a microphone');
+      return st;
+    } catch (e2) {
+      throw firstErr || e2;
+    }
+  }
+
+  function teardownMedia() {
+    stopMeter();
+    stopStream(stream);
+    stream = null;
+    try { video.srcObject = null; } catch (e) {}
+    camState = 'none';
+    micState = 'none';
+  }
+
   async function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       showError('Recording isn’t supported here',
         'This browser can’t open the camera. Try the latest version of Safari.');
       return false;
     }
-    stopStream(stream);
-    stream = null;
+    const gen = ++mediaGen;
+    teardownMedia();                 // stop every old track + audio context first
+    micNote = '';
+    camState = 'starting';
+    updateStatus();
 
-    // Prefer a high-quality 1080p / 30fps stream, but only with `ideal` hints so
-    // Safari can fall back gracefully - never `exact`, never 4K.
-    const hqVideo = {
-      facingMode: { ideal: facing },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30 }
-    };
+    let st;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: hqVideo, audio: true });
+      st = await acquireMedia();
     } catch (err) {
-      if (err && err.name === 'OverconstrainedError') {
-        // extremely unlikely with ideal-only hints, but stay safe
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: facing } }, audio: true
-          });
-        } catch (err2) {
-          console.error('getUserMedia failed:', err2);
-          handleCamError(err2);
-          return false;
-        }
-      } else {
-        console.error('getUserMedia failed:', err);
-        handleCamError(err);
-        return false;
-      }
+      console.error('getUserMedia failed:', err);
+      if (gen === mediaGen) { camState = 'none'; updateStatus(); handleCamError(err); }
+      return false;
+    }
+    if (gen !== mediaGen || !cameraActive) {   // superseded or screen closed meanwhile
+      stopStream(st);
+      return false;
     }
 
+    stream = st;
+    camState = 'ready';
+    micLostDuringRec = false;
+    bindTrackEvents(st);
     readCameraSettings();
+    readAudioInfo();
     video.srcObject = stream;
     video.setAttribute('playsinline', '');
-    video.muted = true;
+    video.muted = true;               // preview is muted so the mic never plays back
     try { await video.play(); } catch (e) { /* autoplay guard */ }
     applyPreviewMirror();
+    await refreshDevices();
+    startMeter();
+    updateStatus();
     return true;
+  }
+
+  function videoLive() {
+    const t = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    return !!t && t.readyState === 'live';
+  }
+  function audioLive() {
+    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    return !!t && t.readyState === 'live';
+  }
+  function audioHealthy() {
+    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    return !!t && t.readyState === 'live' && !t.muted;
+  }
+
+  function bindTrackEvents(st) {
+    st.getTracks().forEach((t) => {
+      t.onended = () => onTrackEnded(t);
+      if (t.kind === 'audio') {
+        t.onmute = () => { updateStatus(); };
+        t.onunmute = () => { updateStatus(); };
+      }
+    });
+  }
+  function onTrackEnded(t) {
+    if (!stream || stream.getTracks().indexOf(t) === -1) return;   // stale track
+    console.warn('Track ended:', t.kind);
+    if (t.kind === 'audio') {
+      micState = 'none';
+      if (recording) micLostDuringRec = true;
+    } else {
+      camState = 'lost';
+      if (recording) {                 // camera died mid-take: keep what we have instead of "recording" nothing
+        recFailed = true;
+        stopRecording();
+      }
+    }
+    updateStatus();
+  }
+
+  // Read the ACTUAL audio track (what Safari really gave us).
+  function readAudioInfo() {
+    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    micInfo = { label: '', channels: null, sampleRate: null, deviceId: null, echo: null, ns: null, agc: null };
+    if (!t) { micState = 'none'; console.warn('No audio track in stream'); return; }
+    let s = {};
+    try { s = (t.getSettings && t.getSettings()) || {}; } catch (e) {}
+    micInfo = {
+      label: t.label || '', channels: s.channelCount || null, sampleRate: s.sampleRate || null,
+      deviceId: s.deviceId || null, echo: s.echoCancellation, ns: s.noiseSuppression, agc: s.autoGainControl
+    };
+    micState = t.readyState === 'live' ? 'ok' : 'none';
+    // Safe diagnostic - no device ids
+    console.log('Audio track:', {
+      label: micInfo.label || '(not exposed)', readyState: t.readyState, muted: t.muted,
+      channels: micInfo.channels, sampleRate: micInfo.sampleRate,
+      echoCancellation: micInfo.echo, noiseSuppression: micInfo.ns, autoGainControl: micInfo.agc
+    });
+  }
+
+  async function refreshDevices() {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const list = await navigator.mediaDevices.enumerateDevices();
+        audioInputs = list.filter((d) => d.kind === 'audioinput')
+          .map((d, i) => ({ id: d.deviceId, label: d.label || ('Microphone ' + (i + 1)) }));
+      } else {
+        audioInputs = [];
+      }
+    } catch (e) {
+      console.warn('enumerateDevices failed', e);
+      audioInputs = [];
+    }
+    deviceSig = audioInputs.map((d) => d.id + '|' + d.label).join(',');
+    renderMicSelect();
+  }
+
+  function activeInputId() {
+    if (micInfo.deviceId && audioInputs.some((d) => d.id === micInfo.deviceId)) return micInfo.deviceId;
+    const m = audioInputs.filter((d) => d.label && d.label === micInfo.label)[0];
+    return m ? m.id : null;
+  }
+
+  // Only offer a picker when Safari really lists more than one input.
+  function renderMicSelect() {
+    micSelect.innerHTML = '';
+    if (audioInputs.length < 2) { micSelectRow.style.display = 'none'; return; }
+    audioInputs.forEach((d) => {
+      const o = document.createElement('option');
+      o.value = d.id; o.textContent = d.label;
+      micSelect.appendChild(o);
+    });
+    const act = activeInputId();
+    if (act) micSelect.value = act;
+    micSelectRow.style.display = '';
+  }
+
+  function onDeviceChange() {
+    clearTimeout(devChangeTimer);
+    devChangeTimer = setTimeout(async () => {
+      if (!cameraActive || !stream) return;
+      const before = deviceSig;
+      await refreshDevices();
+      const t = stream && stream.getAudioTracks()[0];
+      const dead = !t || t.readyState !== 'live';
+      const changed = before !== deviceSig;
+      console.log('devicechange: audio inputs =', audioInputs.length, dead ? '(audio track dead)' : '', changed ? '(list changed)' : '');
+      if (recording && dead) micLostDuringRec = true;      // never kill a take; just record the fact
+      if (dead) micState = 'none';
+      else if (changed) micState = 'changed';
+      updateStatus();
+    }, 400);
+  }
+
+  async function restartMedia() {
+    if (recording || restarting) return false;
+    restarting = true;
+    try {
+      const ok = await startCamera();
+      if (ok) hidePanels();
+      return ok;
+    } finally {
+      restarting = false;
+    }
+  }
+
+  /* ---------- microphone level monitor (Web Audio, diagnostic only) ----------
+     Reads a copy of the mic track through an AnalyserNode. It is NOT connected to
+     the destination (no playback) and never touches the MediaRecorder stream. */
+  function startMeter() {
+    stopMeter();
+    if (cfg.micMeter === false) return;
+    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!t || !AC) return;
+    try {
+      audioCtx = new AC();
+      const src = audioCtx.createMediaStreamSource(new MediaStream([t]));
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      meterBuf = new Uint8Array(analyser.fftSize);
+      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+      meterTimer = setInterval(sampleMeter, 80);
+    } catch (e) {
+      console.warn('Level meter unavailable', e);
+      stopMeter();
+    }
+  }
+  function stopMeter() {
+    if (meterTimer) { clearInterval(meterTimer); meterTimer = null; }
+    analyser = null; meterBuf = null;
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    if (micFill) micFill.style.width = '0%';
+  }
+  let meterShown = 0;
+  let wasHeard = false;
+  function sampleMeter() {
+    if (!analyser) return;
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    analyser.getByteTimeDomainData(meterBuf);
+    let sum = 0;
+    for (let i = 0; i < meterBuf.length; i++) { const v = (meterBuf[i] - 128) / 128; sum += v * v; }
+    const rms = Math.sqrt(sum / meterBuf.length);
+    const db = 20 * Math.log10(Math.max(rms, 1e-5));
+    const level = Math.max(0, Math.min(1, (db + 60) / 60));      // -60 dB .. 0 dB
+    meterShown = level > meterShown ? level : meterShown * 0.8 + level * 0.2;   // quick attack, soft release
+    micFill.style.width = Math.round(meterShown * 100) + '%';
+    if (level > 0.08) micHeardAt = Date.now();
+    const heard = (Date.now() - micHeardAt) < 2500;
+    if (heard !== wasHeard) { wasHeard = heard; updateStatus(); }
+  }
+
+  /* ---------- status UI ---------- */
+  function fmtBytes(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
+    return Math.max(1, Math.round(n / 1e6)) + ' MB';
+  }
+  function setDot(el, cls) { el.className = 'st-dot' + (cls ? ' ' + cls : ''); }
+
+  function updateStatus() {
+    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    const heard = (Date.now() - micHeardAt) < 2500;
+
+    const camTxt = { none: 'not started', starting: 'starting…', ready: 'Ready', lost: 'stopped — tap Reconnect' }[camState] || '';
+    stCam.textContent = 'Camera: ' + camTxt;
+    setDot(stCamDot, camState === 'ready' ? 'ok' : (camState === 'lost' ? 'bad' : ''));
+
+    let micTxt, micCls;
+    if (!stream || camState === 'starting') { micTxt = 'not started'; micCls = ''; }
+    else if (!t || t.readyState !== 'live' || micState === 'none') { micTxt = 'Not detected'; micCls = 'bad'; }
+    else if (micState === 'changed') { micTxt = 'input changed — tap Reconnect'; micCls = 'warn'; }
+    else if (heard) { micTxt = 'Receiving audio'; micCls = 'ok'; }
+    else { micTxt = 'Connected — no sound yet'; micCls = 'ok'; }
+    stMic.textContent = 'Microphone: ' + micTxt;
+    setDot(stMicDot, micCls);
+
+    let recTxt, recCls = '';
+    if (recording) {
+      recTxt = (recPaused ? 'paused ' : '') + fmtTime((Date.now() - recStart) / 1000) + ' · ' + fmtBytes(spool.bytes);
+      recCls = 'bad';
+    } else if (reviewBlob) {
+      recTxt = 'last take ' + fmtBytes(reviewBlob.size);
+    } else {
+      recTxt = 'not recording';
+    }
+    stRec.textContent = 'Recording: ' + recTxt;
+    setDot(stRecDot, recCls);
+
+    const info = [];
+    if (stream) {
+      if (t) {
+        info.push('Input: ' + (micInfo.label || 'not named by Safari'));
+        const bits = [];
+        if (micInfo.channels) bits.push(micInfo.channels + ' ch');
+        if (micInfo.sampleRate) bits.push(Math.round(micInfo.sampleRate / 100) / 10 + ' kHz');
+        if (bits.length) info.push(bits.join(' · '));
+        if (audioInputs.length < 2) info.push('Safari chooses the input automatically.');
+      } else {
+        info.push('No microphone in the camera stream.');
+      }
+    }
+    if (micNote) info.push(micNote);
+    stMicInfo.innerHTML = '';
+    info.forEach((line) => { const d = document.createElement('div'); d.textContent = line; stMicInfo.appendChild(d); });
+
+    // on-screen pill
+    meterEl.classList.toggle('show', !!stream || camState === 'starting');
+    meterEl.classList.toggle('bad', micCls === 'bad');
+    meterEl.classList.toggle('warn', micCls === 'warn');
+    meterEl.classList.toggle('nometer', cfg.micMeter === false);
+    micLabel.textContent = micCls === 'bad' ? 'MIC OFF · tap to reconnect'
+      : micCls === 'warn' ? 'MIC CHANGED · tap to reconnect' : 'MIC';
   }
 
   // Read the ACTUAL negotiated track settings (not what we requested).
@@ -1670,7 +2185,8 @@ Good luck out there.</textarea>
     captureOut.textContent = 'Capture: ' + (parts.length ? parts.join(' · ') : 'not reported by this browser');
 
     if (recActualVbps) {
-      recOut.textContent = 'Recording: ~' + Math.round(recActualVbps / 1e6) + ' Mbps video';
+      recOut.textContent = 'Recording: ~' + Math.round(recActualVbps / 1e6) + ' Mbps video' +
+        (recActualAbps ? ' · ' + Math.round(recActualAbps / 1e3) + ' kbps audio' : '');
     } else if (recRequestedVbps) {
       recOut.textContent = 'Recording: ~' + Math.round(recRequestedVbps / 1e6) + ' Mbps requested';
     }
@@ -1693,10 +2209,15 @@ Good luck out there.</textarea>
   }
 
   async function flipCamera() {
-    if (recording) return;
-    facing = (facing === 'user') ? 'environment' : 'user';
-    const ok = await startCamera();
-    if (!ok) { facing = (facing === 'user') ? 'environment' : 'user'; }
+    if (recording || restarting) return;
+    restarting = true;
+    try {
+      facing = (facing === 'user') ? 'environment' : 'user';
+      const ok = await startCamera();
+      if (!ok) { facing = (facing === 'user') ? 'environment' : 'user'; }
+    } finally {
+      restarting = false;
+    }
   }
 
   /* ---------- recording ---------- */
@@ -1725,20 +2246,34 @@ Good luck out there.</textarea>
     return (h > 0 ? h + ':' + pad(m) : pad(m)) + ':' + pad(ss);
   }
 
-  function onRecordBtn() {
-    if (recording) {
-      stopRecording();
-    } else {
-      if (typeof MediaRecorder === 'undefined') {
-        showError('Recording isn’t supported in this browser', 'Try the latest version of Safari.');
-        return;
-      }
-      startCountdownThenRecord();
+  async function onRecordBtn() {
+    if (recording) { stopRecording(); return; }
+    if (counting || restarting) return;
+    if (typeof MediaRecorder === 'undefined') {
+      showError('Recording isn’t supported in this browser', 'Try the latest version of Safari.');
+      return;
     }
+    // Never record from a stale stream: if the mic route changed, was unplugged, or
+    // the track is muted/ended, re-acquire camera + mic first (this tap is the user gesture).
+    if (!stream || !videoLive() || !audioHealthy() || micState !== 'ok') {
+      const ok = await restartMedia();
+      if (!ok) return;
+    }
+    if (!audioLive()) {
+      showError('Microphone not detected', 'Reconnect your microphone and try again.');
+      return;
+    }
+    startCountdownThenRecord();
   }
 
   function startCountdownThenRecord() {
-    runCountdown(3, () => {
+    counting = true;
+    recMime = pickMime();
+    const spoolReady = spool.begin({ mime: recMime });     // prepared while the 3-2-1 runs
+    runCountdown(3, async () => {
+      try { await spoolReady; } catch (e) { /* memory fallback */ }
+      counting = false;
+      if (!cameraActive) return;
       const started = beginRecording();
       if (started) {
         scrollEl.scrollTop = 0;
@@ -1747,10 +2282,29 @@ Good luck out there.</textarea>
     });
   }
 
+  function logRecorderSetup() {
+    const v = stream ? stream.getVideoTracks() : [];
+    const a = stream ? stream.getAudioTracks() : [];
+    console.log('Recorder setup:', {
+      mime: recMime || '(browser default)',
+      video: v.map((t) => ({ readyState: t.readyState, muted: t.muted })),
+      audio: a.map((t) => ({ label: t.label || '(not exposed)', readyState: t.readyState, muted: t.muted })),
+      videoBitsPerSecond: recorder && recorder.videoBitsPerSecond,
+      audioBitsPerSecond: recorder && recorder.audioBitsPerSecond
+    });
+  }
+
   function beginRecording() {
-    if (!stream) return false;
-    chunks = [];
-    recMime = pickMime();
+    if (!stream || !videoLive()) {
+      showError('Camera isn’t ready', 'The camera stopped. Tap Try again to restart it.');
+      return false;
+    }
+    if (!audioLive()) {                 // never start a take that would be silent
+      showError('Microphone not detected', 'Reconnect your microphone and try again.');
+      return false;
+    }
+    recFailed = false; recPaused = false; micLostDuringRec = false;
+    discardNext = false; finishing = false;
 
     // Prefer a high-quality bitrate for 1080p; fall back safely if the browser
     // rejects the options object. Recording reliability always wins over bitrate.
@@ -1758,13 +2312,14 @@ Good luck out there.</textarea>
     const TARGET_ABPS = 128000;     // 128 kbps audio
     recRequestedVbps = TARGET_VBPS;
     recActualVbps = null;
+    recActualAbps = null;
 
     const hqOpts = { videoBitsPerSecond: TARGET_VBPS, audioBitsPerSecond: TARGET_ABPS };
     if (recMime) hqOpts.mimeType = recMime;
 
     recorder = null;
     try {
-      recorder = new MediaRecorder(stream, hqOpts);              // 1) mime + bitrate
+      recorder = new MediaRecorder(stream, hqOpts);              // 1) mime + bitrates
     } catch (e1) {
       try {
         recorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : {}); // 2) mime only
@@ -1785,18 +2340,25 @@ Good luck out there.</textarea>
     }
 
     try {
-      if (recorder.videoBitsPerSecond) {
-        recActualVbps = recorder.videoBitsPerSecond;
-        console.log('Recording bitrate:', Math.round(recActualVbps / 1e6) + ' Mbps video',
-          recorder.audioBitsPerSecond ? Math.round(recorder.audioBitsPerSecond / 1e3) + ' kbps audio' : '');
-      }
+      if (recorder.videoBitsPerSecond) recActualVbps = recorder.videoBitsPerSecond;
+      if (recorder.audioBitsPerSecond) recActualAbps = recorder.audioBitsPerSecond;
     } catch (e) { /* not reported - fine */ }
     updateQualityLabel();
-    recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-    recorder.onstop = finishRecording;
-    recorder.onerror = (e) => { console.error('recorder error', e); };
+    logRecorderSetup();
+
+    const rec = recorder;
+    rec.ondataavailable = (e) => { if (rec === recorder && e.data && e.data.size) spool.add(e.data); };
+    rec.onstart = () => { console.log('MediaRecorder: start'); };
+    rec.onpause = () => { recPaused = true; console.warn('MediaRecorder: paused'); updateStatus(); };
+    rec.onresume = () => { recPaused = false; console.log('MediaRecorder: resumed'); updateStatus(); };
+    rec.onerror = (e) => {
+      console.error('MediaRecorder error', e && e.error ? e.error : e);
+      recFailed = true;
+      try { if (rec.state !== 'inactive') rec.stop(); else onRecorderStop(); } catch (_) { onRecorderStop(); }
+    };
+    rec.onstop = () => { if (rec === recorder) onRecorderStop(); };
     try {
-      recorder.start(1000);
+      rec.start(1000);                  // 1 s timeslices -> chunks stream into the spool
     } catch (e) {
       console.error('recorder.start failed:', e);
       showError('Recording couldn’t start', 'Try the latest version of Safari.');
@@ -1808,49 +2370,138 @@ Good luck out there.</textarea>
     recordBtn.classList.add('recording');
     recTime.textContent = '00:00';
     recTimer = setInterval(() => {
-      recTime.textContent = fmtTime((Date.now() - recStart) / 1000);
+      recTime.textContent = fmtTime((Date.now() - recStart) / 1000) + ' · ' + fmtBytes(spool.bytes) +
+        (micLostDuringRec ? ' · MIC LOST' : '');
+      updateStatus();
     }, 500);
     requestWakeLock();
+    updateStatus();
     return true;
   }
 
-  function stopRecording() {
-    if (!recording) return;
+  function endRecordingUI() {
     recording = false;
+    recEnd = Date.now();
     if (recTimer) { clearInterval(recTimer); recTimer = null; }
     recIndicator.classList.remove('on');
     recordBtn.classList.remove('recording');
     setPlaying(false);
-    try { recorder.stop(); } catch (e) { console.error(e); }
     releaseWakeLock();
   }
 
-  function finishRecording() {
-    const type = (chunks[0] && chunks[0].type) || recMime || 'video/mp4';
-    const blob = new Blob(chunks, { type });
-    chunks = [];
+  function stopRecording() {
+    if (!recording) return;
+    endRecordingUI();
+    try {
+      if (recorder && recorder.state !== 'inactive') recorder.stop();   // onstop -> finishRecording
+      else onRecorderStop();
+    } catch (e) {
+      console.error('recorder.stop failed', e);
+      onRecorderStop();
+    }
+  }
+
+  function onRecorderStop() {
+    if (recording) {                     // stopped by the browser/system, not by the user
+      console.warn('MediaRecorder stopped unexpectedly');
+      recFailed = true;
+      endRecordingUI();
+    }
+    finishRecording();
+  }
+
+  function releaseReviewMedia() {
     if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
+    reviewVideo.removeAttribute('src');
+    try { reviewVideo.load(); } catch (e) {}
+    reviewBlob = null;
+    reviewFile = null;
+  }
+  function discardReview() {
+    releaseReviewMedia();
+    spool.clear();
+  }
+
+  function fileExt(type) {
+    return type.indexOf('mp4') !== -1 ? 'mp4' : (/webm|matroska/.test(type) ? 'webm' : 'video');
+  }
+  // Report the container the browser REALLY produced; some engines label chunks oddly
+  // (e.g. x-matroska), so fall back to the MIME we requested when the label is unfamiliar.
+  function resolveType(chunkType) {
+    if (/mp4|webm/.test(chunkType || '')) return chunkType;
+    if (/mp4|webm/.test(recMime || '')) return recMime;
+    return chunkType || recMime || 'video/mp4';
+  }
+
+  function presentRecording(parts, opts) {
+    const type = resolveType(parts[0] && parts[0].type);
+    const blob = new Blob(parts, { type });          // references the spooled chunks, no base64 / no extra copies
+    releaseReviewMedia();
+    reviewBlob = blob;
+    try {
+      reviewFile = new File([blob], 'teleprompter-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.' + fileExt(type), { type });
+    } catch (e) { reviewFile = null; }
     reviewUrl = URL.createObjectURL(blob);
-    reviewVideo.src = reviewUrl;
-    reviewVideo._blob = blob;
-    reviewVideo._type = type;
+    reviewVideo.src = reviewUrl;                     // the same URL serves preview and download fallback
+
+    const info = [];
+    if (opts && opts.durationSec) info.push(fmtTime(opts.durationSec));
+    info.push(fmtBytes(blob.size));
+    info.push(type.split(';')[0].replace('video/', '').toUpperCase());
+    reviewInfo.textContent = info.join(' · ');
+
+    const notes = [];
+    if (opts && opts.recovered) notes.push('Recovered from an unfinished recording — it may be cut short.');
+    if (recFailed && !(opts && opts.recovered)) notes.push('Recording stopped unexpectedly. This is everything that was captured.');
+    if (micLostDuringRec && !(opts && opts.recovered)) notes.push('The microphone disconnected during recording, so audio may be missing after that point.');
+    if (fileExt(type) === 'webm') notes.push('This is a WebM file, which the iPhone Photos app can’t import. Tap Save / Share and choose Save to Files.');
+    reviewNote.innerHTML = '';
+    const base = document.createElement('span');
+    base.innerHTML = 'Your video is ready. Tap <strong>Save / Share</strong>, then choose <strong>Save Video</strong> to put it in Photos.';
+    reviewNote.appendChild(base);
+    notes.forEach((n) => { const d = document.createElement('div'); d.style.marginTop = '6px'; d.textContent = n; reviewNote.appendChild(d); });
     showPanel(reviewPanel);
+    updateStatus();
+  }
+
+  async function finishRecording() {
+    if (finishing) return;
+    finishing = true;
+    const discard = discardNext;
+    discardNext = false;
+    let parts = [];
+    try { parts = await spool.assemble(); } catch (e) { console.error('assemble failed', e); }
+    if (discard || !cameraActive) { spool.clear(); return; }
+    if (!parts.length) {
+      spool.clear();
+      showError('Nothing was recorded', 'No video data was captured. Check the camera and microphone, then try again.');
+      return;
+    }
+    spool.finalize({ bytes: spool.bytes });
+    presentRecording(parts, { durationSec: (recEnd - recStart) / 1000 });
+  }
+
+  async function recoverLast() {
+    recoverBtn.disabled = true;
+    let parts = [];
+    try { parts = await spool.assemble(); } catch (e) { console.error(e); }
+    recoverBtn.disabled = false;
+    if (!parts.length) { recoverRow.style.display = 'none'; return; }
+    recFailed = false; micLostDuringRec = false;
+    presentRecording(parts, { recovered: true });
   }
 
   async function saveRecording() {
-    const blob = reviewVideo._blob;
-    const type = reviewVideo._type || 'video/mp4';
-    if (!blob) return;
-    const ext = type.indexOf('mp4') !== -1 ? 'mp4' : (type.indexOf('webm') !== -1 ? 'webm' : 'video');
-    const fname = 'teleprompter-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.' + ext;
+    if (!reviewBlob) return;
+    const type = reviewBlob.type || 'video/mp4';
+    const file = reviewFile;
+    const big = reviewBlob.size > 1.5e9;
 
+    // Share Sheet first: the dependable way to reach Photos ("Save Video") or Files on iOS.
     try {
-      if (navigator.canShare) {
-        const file = new File([blob], fname, { type });
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: 'Recording' });
-          return;
-        }
+      if (file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Recording' });
+        return;
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return;
@@ -1860,14 +2511,19 @@ Good luck out there.</textarea>
     try {
       const a = document.createElement('a');
       a.href = reviewUrl;
-      a.download = fname;
+      a.download = (file && file.name) || ('recording.' + fileExt(type));
       document.body.appendChild(a);
       a.click();
       a.remove();
-      reviewNote.innerHTML = 'If the video didn’t save, press and hold the video above and choose <strong>Save to Photos</strong>.';
+      reviewNote.innerHTML = '';
+      const d = document.createElement('div');
+      d.textContent = big
+        ? 'This is a very large file, and this browser may not be able to download it directly. If nothing was saved, press and hold the video above and choose Save, or record shorter takes.'
+        : 'If the video didn’t save, press and hold the video above and choose Save to Photos.';
+      reviewNote.appendChild(d);
     } catch (e) {
       console.error('download failed', e);
-      reviewNote.innerHTML = 'To keep this video, press and hold the video above and choose <strong>Save to Photos</strong>.';
+      reviewNote.textContent = 'To keep this video, press and hold the video above and choose Save to Photos.';
     }
   }
 
@@ -1893,7 +2549,7 @@ Good luck out there.</textarea>
     try {
       if ('wakeLock' in navigator && navigator.wakeLock.request) {
         wakeLock = await navigator.wakeLock.request('screen');
-        wakeLock.addEventListener('release', () => {});
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
       }
     } catch (e) { /* not fatal */ }
   }
@@ -1901,8 +2557,19 @@ Good luck out there.</textarea>
     try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {}
   }
   document.addEventListener('visibilitychange', () => {
-    if (cameraActive && (recording || playing) && document.visibilityState === 'visible' && !wakeLock) {
-      requestWakeLock();
+    if (!cameraActive) return;
+    if (document.visibilityState === 'hidden') { wasHidden = true; return; }
+    if ((recording || playing) && !wakeLock) requestWakeLock();
+    if (recording && recorder && recorder.state === 'paused') {
+      try { recorder.resume(); } catch (e) { console.warn('resume failed', e); }
+    }
+    // Returning from the background (e.g. after plugging/unplugging a mic): the
+    // audio route may have changed without a devicechange event, so verify.
+    if (wasHidden && stream && !recording) {
+      wasHidden = false;
+      micState = audioLive() ? 'changed' : 'none';
+      if (!videoLive()) camState = 'lost';
+      updateStatus();
     }
   });
 
@@ -1934,20 +2601,28 @@ Good luck out there.</textarea>
     setup.classList.add('hidden');
     cameraScreen.classList.add('active');
     cameraActive = true;
+    camState = 'none'; micState = 'none'; micNote = ''; micHeardAt = 0;
+    updateStatus();
     hidePanels();
     showPanel(introPanel);
+    recoverRow.style.display = 'none';
+    spool.peek().then((found) => {                 // an earlier take that never reached the review screen
+      if (found && cameraActive && introPanel.classList.contains('show')) {
+        recoverNote.textContent = 'An unfinished recording from earlier was found on this device. You can recover it before starting a new one.';
+        recoverRow.style.display = '';
+      }
+    });
   }
 
   async function exitCamera() {
-    stopRecording();
+    mediaGen++;                              // cancel any in-flight camera request
+    if (recording) { discardNext = true; stopRecording(); }
+    counting = false;
     setPlaying(false);
     releaseWakeLock();
-    stopStream(stream);
-    stream = null;
-    video.srcObject = null;
-    if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
-    reviewVideo.removeAttribute('src');
-    reviewVideo.load();
+    teardownMedia();                         // camera + microphone + level meter off
+    discardReview();
+    updateStatus();
     sheet.classList.remove('open');
     hidePanels();
     cameraScreen.classList.remove('active');
@@ -1959,16 +2634,35 @@ Good luck out there.</textarea>
   /* ---------- events ---------- */
   cameraBtn.addEventListener('click', openCamera);
 
-  introGo.addEventListener('click', async () => {
-    const ok = await startCamera();
-    if (ok) hidePanels();
-  });
+  introGo.addEventListener('click', () => { restartMedia(); });
+  recoverBtn.addEventListener('click', recoverLast);
   introBack.addEventListener('click', exitCamera);
   errBack.addEventListener('click', exitCamera);
-  errRetry.addEventListener('click', async () => {
-    const ok = await startCamera();
-    if (ok) hidePanels();
+  errRetry.addEventListener('click', () => { restartMedia(); });
+
+  // Microphone controls
+  meterEl.addEventListener('click', () => { if (micState !== 'ok' || !audioHealthy()) restartMedia(); });
+  reconnectBtn.addEventListener('click', () => { restartMedia(); });
+  micMeterInput.addEventListener('change', () => {
+    cfg.micMeter = micMeterInput.checked;
+    saveCfg();
+    if (cfg.micMeter) startMeter(); else stopMeter();
+    updateStatus();
   });
+  micSelect.addEventListener('change', async () => {
+    if (recording) { renderMicSelect(); return; }
+    selectedMicId = micSelect.value;
+    const ok = await restartMedia();
+    // Don't pretend: report what Safari actually gave us.
+    if (ok && micInfo.deviceId && micInfo.deviceId !== selectedMicId) {
+      micNote = 'Safari used “' + (micInfo.label || 'another input') + '” instead of the one you picked.';
+      updateStatus();
+    }
+  });
+  if (navigator.mediaDevices) {
+    if (navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
+    else navigator.mediaDevices.ondevicechange = onDeviceChange;
+  }
 
   closeBtn.addEventListener('click', exitCamera);
   flipBtn.addEventListener('click', flipCamera);
@@ -2037,13 +2731,11 @@ Good luck out there.</textarea>
   });
 
   reviewRetake.addEventListener('click', () => {
-    if (reviewUrl) { URL.revokeObjectURL(reviewUrl); reviewUrl = null; }
-    reviewVideo.removeAttribute('src');
-    reviewVideo.load();
-    reviewNote.innerHTML = 'Your video is ready. Use <strong>Save / Share</strong> to keep it in Photos or send it on.';
+    discardReview();
     scrollEl.scrollTop = 0;
     hidePanels();
-    if (!stream) startCamera();
+    if (!stream || !videoLive() || !audioHealthy()) restartMedia();   // never retake on a stale mic
+    updateStatus();
   });
   reviewSave.addEventListener('click', saveRecording);
   reviewBack.addEventListener('click', exitCamera);
