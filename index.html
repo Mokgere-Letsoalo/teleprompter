@@ -548,9 +548,6 @@
   .mm-dot { width: 9px; height: 9px; border-radius: 50%; background: #2fbf71; flex: 0 0 auto; }
   #micMeter.warn .mm-dot { background: #e0a100; }
   #micMeter.bad .mm-dot { background: var(--rec); }
-  .mm-bar { width: 70px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.22); overflow: hidden; }
-  .mm-fill { display: block; height: 100%; width: 0; background: #2fbf71; }
-  #micMeter.nometer .mm-bar, #micMeter.warn .mm-bar, #micMeter.bad .mm-bar { display: none; }
   .st-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); margin-bottom: 5px; }
   .st-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; background: #6b6c75; }
   .st-dot.ok { background: #2fbf71; }
@@ -770,9 +767,8 @@ Good luck out there.</textarea>
     <button id="camSpeedUp" title="Faster">+</button>
   </div>
 
-  <button type="button" id="micMeter" aria-label="Microphone level. Tap to reconnect if the microphone is not detected.">
+  <button type="button" id="micMeter" aria-label="Microphone status. Tap to reconnect if the microphone is not detected.">
     <span class="mm-dot"></span><span id="micLabel">MIC</span>
-    <span class="mm-bar"><span class="mm-fill" id="micFill"></span></span>
   </button>
 
   <div id="camSheet">
@@ -824,14 +820,6 @@ Good luck out there.</textarea>
       <div class="st-row"><span class="st-dot" id="stMicDot"></span><span id="stMic">Microphone: not started</span></div>
       <div class="st-row"><span class="st-dot" id="stRecDot"></span><span id="stRec">Recording: not recording</span></div>
       <div class="st-info" id="stMicInfo"></div>
-      <div id="camMicSelectRow" style="display:none;margin-top:8px;">
-        <label for="camMicSelect">Microphone input</label>
-        <select id="camMicSelect"></select>
-      </div>
-      <div class="toggle-row" style="margin-top:10px;">
-        <input type="checkbox" id="camMicMeter" checked>
-        <label for="camMicMeter" style="margin:0;">Show microphone level meter</label>
-      </div>
       <button id="camReconnect" style="margin-top:10px;">Reconnect microphone &amp; restart camera</button>
     </div>
     <div class="field">
@@ -1575,18 +1563,12 @@ Good luck out there.</textarea>
   let camState = 'none';        // none | starting | ready | lost
   let micState = 'none';        // none | ok | changed
   let micInfo = { label: '', channels: null, sampleRate: null, deviceId: null, echo: null, ns: null, agc: null };
-  let audioInputs = [];
-  let deviceSig = '';
-  let selectedMicId = null;
   let micNote = '';
-  let audioCtx = null, analyser = null, meterBuf = null, meterTimer = null;
-  let micHeardAt = 0;
   let devChangeTimer = null;
   let micLostDuringRec = false;
   let restarting = false;
   let counting = false;
   let mediaGen = 0;
-  let wasHidden = false;
   let reviewBlob = null;
   let reviewFile = null;
   let recEnd = 0;
@@ -1597,14 +1579,10 @@ Good luck out there.</textarea>
 
   const meterEl = document.getElementById('micMeter');
   const micLabel = document.getElementById('micLabel');
-  const micFill = document.getElementById('micFill');
   const stCam = document.getElementById('stCam'), stCamDot = document.getElementById('stCamDot');
   const stMic = document.getElementById('stMic'), stMicDot = document.getElementById('stMicDot');
   const stRec = document.getElementById('stRec'), stRecDot = document.getElementById('stRecDot');
   const stMicInfo = document.getElementById('stMicInfo');
-  const micSelectRow = document.getElementById('camMicSelectRow');
-  const micSelect = document.getElementById('camMicSelect');
-  const micMeterInput = document.getElementById('camMicMeter');
   const reconnectBtn = document.getElementById('camReconnect');
   const reviewInfo = document.getElementById('reviewInfo');
   const recoverRow = document.getElementById('camRecoverRow');
@@ -1615,7 +1593,7 @@ Good luck out there.</textarea>
 
   let cfg = {
     opacity: 35, boxW: 88, boxH: 42, font: 40, line: 1.5, speed: 3,
-    mirrorText: false, mirrorPreview: true, rotation: 0, micMeter: true,
+    mirrorText: false, mirrorPreview: true, rotation: 0,
     posX: null, posY: null
   };
 
@@ -1640,7 +1618,6 @@ Good luck out there.</textarea>
     speedInput.value = cfg.speed;
     mirrorTextInput.checked = cfg.mirrorText;
     mirrorPreviewInput.checked = cfg.mirrorPreview;
-    micMeterInput.checked = cfg.micMeter !== false;
     syncRotationUI();
   }
 
@@ -1831,35 +1808,22 @@ Good luck out there.</textarea>
     return { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } };
   }
 
-  // Detailed -> simpler -> plain audio constraints. Unsupported optional
-  // constraints must never stop the camera from starting.
-  function audioTiers() {
-    const pick = selectedMicId ? { deviceId: { ideal: selectedMicId } } : {};
-    return [
-      Object.assign({
-        echoCancellation: false, noiseSuppression: false, autoGainControl: false,
-        channelCount: { ideal: 1 }, sampleRate: { ideal: 48000 }, sampleSize: { ideal: 16 }
-      }, pick),
-      Object.assign({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }, pick),
-      selectedMicId ? { deviceId: { ideal: selectedMicId } } : true,
-      true
-    ];
-  }
-
+  // ONE getUserMedia call for camera + microphone, with the plain `audio: true`
+  // baseline. Safari/iOS chooses the microphone and its normal processing.
   async function acquireMedia() {
     const gum = (c) => navigator.mediaDevices.getUserMedia(c);
     const denied = (e) => e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
-    const attempts = audioTiers().map((a) => ({ video: videoConstraints(), audio: a }));
-    attempts.push({ video: { facingMode: { ideal: facing } }, audio: true });
+    const attempts = [
+      { video: videoConstraints(), audio: true },
+      { video: { facingMode: { ideal: facing } }, audio: true }      // simpler video, still audio: true
+    ];
     let firstErr = null;
     for (let i = 0; i < attempts.length; i++) {
       try {
-        const st = await gum(attempts[i]);
-        if (i > 0) console.warn('getUserMedia: succeeded with fallback constraint tier', i);
-        return st;
+        return await gum(attempts[i]);
       } catch (e) {
         if (!firstErr) firstErr = e;
-        console.warn('getUserMedia tier', i, 'failed:', e && e.name);
+        console.warn('getUserMedia attempt', i, 'failed:', e && e.name);
         if (denied(e)) break;
       }
     }
@@ -1874,7 +1838,6 @@ Good luck out there.</textarea>
   }
 
   function teardownMedia() {
-    stopMeter();
     stopStream(stream);
     stream = null;
     try { video.srcObject = null; } catch (e) {}
@@ -1889,8 +1852,7 @@ Good luck out there.</textarea>
       return false;
     }
     const gen = ++mediaGen;
-    teardownMedia();                 // stop every old track + audio context first
-    micNote = '';
+    teardownMedia();                 // stop every old track; never reuse a stopped stream
     camState = 'starting';
     updateStatus();
 
@@ -1907,7 +1869,7 @@ Good luck out there.</textarea>
       return false;
     }
 
-    stream = st;
+    stream = st;                      // the SAME stream feeds the preview and MediaRecorder
     camState = 'ready';
     micLostDuringRec = false;
     bindTrackEvents(st);
@@ -1918,8 +1880,6 @@ Good luck out there.</textarea>
     video.muted = true;               // preview is muted so the mic never plays back
     try { await video.play(); } catch (e) { /* autoplay guard */ }
     applyPreviewMirror();
-    await refreshDevices();
-    startMeter();
     updateStatus();
     return true;
   }
@@ -1928,23 +1888,14 @@ Good luck out there.</textarea>
     const t = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
     return !!t && t.readyState === 'live';
   }
+  // The only audio test that matters: is there a live audio track on the active stream?
   function audioLive() {
     const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
-    return !!t && t.readyState === 'live';
-  }
-  function audioHealthy() {
-    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
-    return !!t && t.readyState === 'live' && !t.muted;
+    return !!t && t.readyState === 'live' && t.enabled !== false;
   }
 
   function bindTrackEvents(st) {
-    st.getTracks().forEach((t) => {
-      t.onended = () => onTrackEnded(t);
-      if (t.kind === 'audio') {
-        t.onmute = () => { updateStatus(); };
-        t.onunmute = () => { updateStatus(); };
-      }
-    });
+    st.getTracks().forEach((t) => { t.onended = () => onTrackEnded(t); });
   }
   function onTrackEnded(t) {
     if (!stream || stream.getTracks().indexOf(t) === -1) return;   // stale track
@@ -1954,7 +1905,7 @@ Good luck out there.</textarea>
       if (recording) micLostDuringRec = true;
     } else {
       camState = 'lost';
-      if (recording) {                 // camera died mid-take: keep what we have instead of "recording" nothing
+      if (recording) {                 // camera died mid-take: keep what we have
         recFailed = true;
         stopRecording();
       }
@@ -1962,76 +1913,39 @@ Good luck out there.</textarea>
     updateStatus();
   }
 
-  // Read the ACTUAL audio track (what Safari really gave us).
+  // Inspect the audio track Safari actually gave us (diagnostic only).
   function readAudioInfo() {
-    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
+    const st = stream;
+    const tracks = st ? st.getTracks() : [];
+    const at = st ? st.getAudioTracks() : [];
     micInfo = { label: '', channels: null, sampleRate: null, deviceId: null, echo: null, ns: null, agc: null };
-    if (!t) { micState = 'none'; console.warn('No audio track in stream'); return; }
-    let s = {};
-    try { s = (t.getSettings && t.getSettings()) || {}; } catch (e) {}
-    micInfo = {
-      label: t.label || '', channels: s.channelCount || null, sampleRate: s.sampleRate || null,
-      deviceId: s.deviceId || null, echo: s.echoCancellation, ns: s.noiseSuppression, agc: s.autoGainControl
-    };
-    micState = t.readyState === 'live' ? 'ok' : 'none';
-    // Safe diagnostic - no device ids
-    console.log('Audio track:', {
-      label: micInfo.label || '(not exposed)', readyState: t.readyState, muted: t.muted,
-      channels: micInfo.channels, sampleRate: micInfo.sampleRate,
-      echoCancellation: micInfo.echo, noiseSuppression: micInfo.ns, autoGainControl: micInfo.agc
+    at.forEach((t, i) => {
+      let s = {};
+      try { s = (t.getSettings && t.getSettings()) || {}; } catch (e) {}
+      if (i === 0) micInfo = { label: t.label || '', channels: s.channelCount || null, sampleRate: s.sampleRate || null };
     });
-  }
-
-  async function refreshDevices() {
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-        const list = await navigator.mediaDevices.enumerateDevices();
-        audioInputs = list.filter((d) => d.kind === 'audioinput')
-          .map((d, i) => ({ id: d.deviceId, label: d.label || ('Microphone ' + (i + 1)) }));
-      } else {
-        audioInputs = [];
-      }
-    } catch (e) {
-      console.warn('enumerateDevices failed', e);
-      audioInputs = [];
-    }
-    deviceSig = audioInputs.map((d) => d.id + '|' + d.label).join(',');
-    renderMicSelect();
-  }
-
-  function activeInputId() {
-    if (micInfo.deviceId && audioInputs.some((d) => d.id === micInfo.deviceId)) return micInfo.deviceId;
-    const m = audioInputs.filter((d) => d.label && d.label === micInfo.label)[0];
-    return m ? m.id : null;
-  }
-
-  // Only offer a picker when Safari really lists more than one input.
-  function renderMicSelect() {
-    micSelect.innerHTML = '';
-    if (audioInputs.length < 2) { micSelectRow.style.display = 'none'; return; }
-    audioInputs.forEach((d) => {
-      const o = document.createElement('option');
-      o.value = d.id; o.textContent = d.label;
-      micSelect.appendChild(o);
+    micState = (at[0] && at[0].readyState === 'live') ? 'ok' : 'none';
+    console.log('Stream tracks:', {
+      total: tracks.length,
+      video: st ? st.getVideoTracks().length : 0,
+      audio: at.length,
+      audioTracks: at.map((t) => ({
+        kind: t.kind, readyState: t.readyState, enabled: t.enabled, muted: t.muted,
+        label: t.label || '(not exposed)'
+      }))
     });
-    const act = activeInputId();
-    if (act) micSelect.value = act;
-    micSelectRow.style.display = '';
+    if (!at.length) console.warn('No audio track in stream');
   }
 
+  // Device changes are only a hint: never tear down a working mic because of an event.
   function onDeviceChange() {
     clearTimeout(devChangeTimer);
-    devChangeTimer = setTimeout(async () => {
+    devChangeTimer = setTimeout(() => {
       if (!cameraActive || !stream) return;
-      const before = deviceSig;
-      await refreshDevices();
-      const t = stream && stream.getAudioTracks()[0];
-      const dead = !t || t.readyState !== 'live';
-      const changed = before !== deviceSig;
-      console.log('devicechange: audio inputs =', audioInputs.length, dead ? '(audio track dead)' : '', changed ? '(list changed)' : '');
-      if (recording && dead) micLostDuringRec = true;      // never kill a take; just record the fact
+      const dead = !audioLive();
+      console.log('devicechange:', dead ? 'audio track is not live' : 'audio track still live');
       if (dead) micState = 'none';
-      else if (changed) micState = 'changed';
+      else if (!recording) micState = 'changed';     // display note only; does not block recording
       updateStatus();
     }, 400);
   }
@@ -2048,54 +1962,7 @@ Good luck out there.</textarea>
     }
   }
 
-  /* ---------- microphone level monitor (Web Audio, diagnostic only) ----------
-     Reads a copy of the mic track through an AnalyserNode. It is NOT connected to
-     the destination (no playback) and never touches the MediaRecorder stream. */
-  function startMeter() {
-    stopMeter();
-    if (cfg.micMeter === false) return;
-    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!t || !AC) return;
-    try {
-      audioCtx = new AC();
-      const src = audioCtx.createMediaStreamSource(new MediaStream([t]));
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      src.connect(analyser);
-      meterBuf = new Uint8Array(analyser.fftSize);
-      if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-      meterTimer = setInterval(sampleMeter, 80);
-    } catch (e) {
-      console.warn('Level meter unavailable', e);
-      stopMeter();
-    }
-  }
-  function stopMeter() {
-    if (meterTimer) { clearInterval(meterTimer); meterTimer = null; }
-    analyser = null; meterBuf = null;
-    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
-    if (micFill) micFill.style.width = '0%';
-  }
-  let meterShown = 0;
-  let wasHeard = false;
-  function sampleMeter() {
-    if (!analyser) return;
-    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-    analyser.getByteTimeDomainData(meterBuf);
-    let sum = 0;
-    for (let i = 0; i < meterBuf.length; i++) { const v = (meterBuf[i] - 128) / 128; sum += v * v; }
-    const rms = Math.sqrt(sum / meterBuf.length);
-    const db = 20 * Math.log10(Math.max(rms, 1e-5));
-    const level = Math.max(0, Math.min(1, (db + 60) / 60));      // -60 dB .. 0 dB
-    meterShown = level > meterShown ? level : meterShown * 0.8 + level * 0.2;   // quick attack, soft release
-    micFill.style.width = Math.round(meterShown * 100) + '%';
-    if (level > 0.08) micHeardAt = Date.now();
-    const heard = (Date.now() - micHeardAt) < 2500;
-    if (heard !== wasHeard) { wasHeard = heard; updateStatus(); }
-  }
-
-  /* ---------- status UI ---------- */
+  /* ---------- status UI (simple) ---------- */
   function fmtBytes(n) {
     if (n >= 1e9) return (n / 1e9).toFixed(2) + ' GB';
     return Math.max(1, Math.round(n / 1e6)) + ' MB';
@@ -2103,19 +1970,14 @@ Good luck out there.</textarea>
   function setDot(el, cls) { el.className = 'st-dot' + (cls ? ' ' + cls : ''); }
 
   function updateStatus() {
-    const t = stream && stream.getAudioTracks && stream.getAudioTracks()[0];
-    const heard = (Date.now() - micHeardAt) < 2500;
-
-    const camTxt = { none: 'not started', starting: 'starting…', ready: 'Ready', lost: 'stopped — tap Reconnect' }[camState] || '';
+    const camTxt = { none: 'not started', starting: 'starting…', ready: 'Connected', lost: 'stopped — tap Reconnect' }[camState] || '';
     stCam.textContent = 'Camera: ' + camTxt;
     setDot(stCamDot, camState === 'ready' ? 'ok' : (camState === 'lost' ? 'bad' : ''));
 
     let micTxt, micCls;
     if (!stream || camState === 'starting') { micTxt = 'not started'; micCls = ''; }
-    else if (!t || t.readyState !== 'live' || micState === 'none') { micTxt = 'Not detected'; micCls = 'bad'; }
-    else if (micState === 'changed') { micTxt = 'input changed — tap Reconnect'; micCls = 'warn'; }
-    else if (heard) { micTxt = 'Receiving audio'; micCls = 'ok'; }
-    else { micTxt = 'Connected — no sound yet'; micCls = 'ok'; }
+    else if (!audioLive()) { micTxt = 'Not detected'; micCls = 'bad'; }
+    else { micTxt = 'Connected'; micCls = 'ok'; }
     stMic.textContent = 'Microphone: ' + micTxt;
     setDot(stMicDot, micCls);
 
@@ -2126,35 +1988,22 @@ Good luck out there.</textarea>
     } else if (reviewBlob) {
       recTxt = 'last take ' + fmtBytes(reviewBlob.size);
     } else {
-      recTxt = 'not recording';
+      recTxt = stream && videoLive() && audioLive() ? 'ready' : 'not recording';
     }
     stRec.textContent = 'Recording: ' + recTxt;
     setDot(stRecDot, recCls);
 
     const info = [];
-    if (stream) {
-      if (t) {
-        info.push('Input: ' + (micInfo.label || 'not named by Safari'));
-        const bits = [];
-        if (micInfo.channels) bits.push(micInfo.channels + ' ch');
-        if (micInfo.sampleRate) bits.push(Math.round(micInfo.sampleRate / 100) / 10 + ' kHz');
-        if (bits.length) info.push(bits.join(' · '));
-        if (audioInputs.length < 2) info.push('Safari chooses the input automatically.');
-      } else {
-        info.push('No microphone in the camera stream.');
-      }
-    }
-    if (micNote) info.push(micNote);
+    if (stream && audioLive() && micInfo.label) info.push('Input: ' + micInfo.label);
+    if (stream && audioLive() && micState === 'changed') info.push('The audio input may have changed. If you hear no sound in your video, tap Reconnect.');
+    if (!stream || !audioLive()) { if (stream) info.push('Plug in or unplug your microphone, then tap Reconnect.'); }
     stMicInfo.innerHTML = '';
     info.forEach((line) => { const d = document.createElement('div'); d.textContent = line; stMicInfo.appendChild(d); });
 
-    // on-screen pill
-    meterEl.classList.toggle('show', !!stream || camState === 'starting');
-    meterEl.classList.toggle('bad', micCls === 'bad');
-    meterEl.classList.toggle('warn', micCls === 'warn');
-    meterEl.classList.toggle('nometer', cfg.micMeter === false);
-    micLabel.textContent = micCls === 'bad' ? 'MIC OFF · tap to reconnect'
-      : micCls === 'warn' ? 'MIC CHANGED · tap to reconnect' : 'MIC';
+    // on-screen chip: only draws attention when the microphone is genuinely missing
+    meterEl.classList.toggle('show', !!stream && !audioLive());
+    meterEl.classList.toggle('bad', !!stream && !audioLive());
+    micLabel.textContent = 'MIC OFF · tap to reconnect';
   }
 
   // Read the ACTUAL negotiated track settings (not what we requested).
@@ -2253,9 +2102,8 @@ Good luck out there.</textarea>
       showError('Recording isn’t supported in this browser', 'Try the latest version of Safari.');
       return;
     }
-    // Never record from a stale stream: if the mic route changed, was unplugged, or
-    // the track is muted/ended, re-acquire camera + mic first (this tap is the user gesture).
-    if (!stream || !videoLive() || !audioHealthy() || micState !== 'ok') {
+    // Only block/re-acquire when the active stream genuinely has no live audio (or video) track.
+    if (!stream || !videoLive() || !audioLive()) {
       const ok = await restartMedia();
       if (!ok) return;
     }
@@ -2287,10 +2135,12 @@ Good luck out there.</textarea>
     const a = stream ? stream.getAudioTracks() : [];
     console.log('Recorder setup:', {
       mime: recMime || '(browser default)',
-      video: v.map((t) => ({ readyState: t.readyState, muted: t.muted })),
-      audio: a.map((t) => ({ label: t.label || '(not exposed)', readyState: t.readyState, muted: t.muted })),
+      videoTracks: v.length,
+      audioTracks: a.length,
+      audio: a.map((t) => ({ label: t.label || '(not exposed)', readyState: t.readyState, enabled: t.enabled, muted: t.muted })),
       videoBitsPerSecond: recorder && recorder.videoBitsPerSecond,
-      audioBitsPerSecond: recorder && recorder.audioBitsPerSecond
+      audioBitsPerSecond: recorder && recorder.audioBitsPerSecond,
+      sameStreamAsPreview: video.srcObject === stream
     });
   }
 
@@ -2309,17 +2159,17 @@ Good luck out there.</textarea>
     // Prefer a high-quality bitrate for 1080p; fall back safely if the browser
     // rejects the options object. Recording reliability always wins over bitrate.
     const TARGET_VBPS = 12000000;   // ~12 Mbps video
-    const TARGET_ABPS = 128000;     // 128 kbps audio
     recRequestedVbps = TARGET_VBPS;
     recActualVbps = null;
     recActualAbps = null;
 
-    const hqOpts = { videoBitsPerSecond: TARGET_VBPS, audioBitsPerSecond: TARGET_ABPS };
+    // Audio bitrate is left to MediaRecorder (compatibility over a fixed number).
+    const hqOpts = { videoBitsPerSecond: TARGET_VBPS };
     if (recMime) hqOpts.mimeType = recMime;
 
     recorder = null;
     try {
-      recorder = new MediaRecorder(stream, hqOpts);              // 1) mime + bitrates
+      recorder = new MediaRecorder(stream, hqOpts);              // 1) mime + video bitrate, ORIGINAL stream
     } catch (e1) {
       try {
         recorder = new MediaRecorder(stream, recMime ? { mimeType: recMime } : {}); // 2) mime only
@@ -2478,6 +2328,10 @@ Good luck out there.</textarea>
       return;
     }
     spool.finalize({ bytes: spool.bytes });
+    console.log('Recording finished:', {
+      chunks: parts.length, bytes: spool.bytes, mime: resolveType(parts[0] && parts[0].type),
+      audioTrackLiveAtStop: audioLive(), audioLostDuringTake: micLostDuringRec
+    });
     presentRecording(parts, { durationSec: (recEnd - recStart) / 1000 });
   }
 
@@ -2558,17 +2412,14 @@ Good luck out there.</textarea>
   }
   document.addEventListener('visibilitychange', () => {
     if (!cameraActive) return;
-    if (document.visibilityState === 'hidden') { wasHidden = true; return; }
+    if (document.visibilityState === 'hidden') return;
     if ((recording || playing) && !wakeLock) requestWakeLock();
     if (recording && recorder && recorder.state === 'paused') {
       try { recorder.resume(); } catch (e) { console.warn('resume failed', e); }
     }
-    // Returning from the background (e.g. after plugging/unplugging a mic): the
-    // audio route may have changed without a devicechange event, so verify.
-    if (wasHidden && stream && !recording) {
-      wasHidden = false;
-      micState = audioLive() ? 'changed' : 'none';
+    if (stream && !recording) {                // just refresh the status text from the real tracks
       if (!videoLive()) camState = 'lost';
+      if (!audioLive()) micState = 'none';
       updateStatus();
     }
   });
@@ -2601,7 +2452,7 @@ Good luck out there.</textarea>
     setup.classList.add('hidden');
     cameraScreen.classList.add('active');
     cameraActive = true;
-    camState = 'none'; micState = 'none'; micNote = ''; micHeardAt = 0;
+    camState = 'none'; micState = 'none'; micNote = '';
     updateStatus();
     hidePanels();
     showPanel(introPanel);
@@ -2641,24 +2492,8 @@ Good luck out there.</textarea>
   errRetry.addEventListener('click', () => { restartMedia(); });
 
   // Microphone controls
-  meterEl.addEventListener('click', () => { if (micState !== 'ok' || !audioHealthy()) restartMedia(); });
+  meterEl.addEventListener('click', () => { if (!audioLive()) restartMedia(); });
   reconnectBtn.addEventListener('click', () => { restartMedia(); });
-  micMeterInput.addEventListener('change', () => {
-    cfg.micMeter = micMeterInput.checked;
-    saveCfg();
-    if (cfg.micMeter) startMeter(); else stopMeter();
-    updateStatus();
-  });
-  micSelect.addEventListener('change', async () => {
-    if (recording) { renderMicSelect(); return; }
-    selectedMicId = micSelect.value;
-    const ok = await restartMedia();
-    // Don't pretend: report what Safari actually gave us.
-    if (ok && micInfo.deviceId && micInfo.deviceId !== selectedMicId) {
-      micNote = 'Safari used “' + (micInfo.label || 'another input') + '” instead of the one you picked.';
-      updateStatus();
-    }
-  });
   if (navigator.mediaDevices) {
     if (navigator.mediaDevices.addEventListener) navigator.mediaDevices.addEventListener('devicechange', onDeviceChange);
     else navigator.mediaDevices.ondevicechange = onDeviceChange;
@@ -2734,7 +2569,7 @@ Good luck out there.</textarea>
     discardReview();
     scrollEl.scrollTop = 0;
     hidePanels();
-    if (!stream || !videoLive() || !audioHealthy()) restartMedia();   // never retake on a stale mic
+    if (!stream || !videoLive() || !audioLive()) restartMedia();
     updateStatus();
   });
   reviewSave.addEventListener('click', saveRecording);

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'teleprompter-v5';
+const CACHE_NAME = 'teleprompter-v6';
 const ASSETS = [
   './',
   './index.html',
